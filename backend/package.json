@@ -1,0 +1,40 @@
+{
+  "name": "@stellaryield/backend",
+  "version": "0.1.0",
+  "description": "Backend API server for StellarYield — indexes on-chain events and exposes REST endpoints",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "db:migrate": "node dist/db/migrate.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.0.0",
+    "@stellaryield/sdk": "*",
+    "express": "^4.21.0",
+    "zod": "^3.23.0",
+    "pg": "^8.13.0",
+    "dotenv": "^16.4.0",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "@eslint/js": "^9.15.0",
+    "eslint": "^9.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.16.0",
+    "vitest": "^2.1.0"
+  }
+}
