@@ -118,3 +118,57 @@ export async function readShareBalance(
   // balance() returns 0 for unknown addresses — BigInt(0) = 0n
   return BigInt(value ?? 0);
 }
+
+/**
+ * Read the current epoch from the contract.
+ * Returns 0 for vaults in the "Funding" state.
+ *
+ * Closes #429
+ */
+export async function readCurrentEpoch(contractId: string): Promise<number> {
+  const state = await readVaultState(contractId);
+  if (state === "Funding") {
+    return 0;
+  }
+  const value = await simulateRead<number>(contractId, "current_epoch");
+  return Number(value ?? 0);
+}
+
+/**
+ * Read epoch yield data from the contract.
+ * Returns zeroed values for epoch 0 or empty epochs.
+ *
+ * Closes #430
+ */
+export async function readEpochData(
+  contractId: string,
+  epoch: number,
+): Promise<{
+  yieldAmount: bigint;
+  totalShares: bigint;
+  timestamp: bigint;
+}> {
+  if (epoch === 0) {
+    return { yieldAmount: 0n, totalShares: 0n, timestamp: 0n };
+  }
+
+  const epochArg = xdr.ScVal.scvU32(epoch);
+  
+  let raw: any;
+  try {
+    raw = await simulateRead<any>(contractId, "get_epoch_data", [epochArg]);
+  } catch (err: any) {
+    return { yieldAmount: 0n, totalShares: 0n, timestamp: 0n };
+  }
+
+  if (!raw) {
+    return { yieldAmount: 0n, totalShares: 0n, timestamp: 0n };
+  }
+
+  return {
+    yieldAmount: BigInt(raw.yield_amount ?? raw[0] ?? 0n),
+    totalShares: BigInt(raw.total_shares ?? raw[1] ?? 0n),
+    timestamp: BigInt(raw.timestamp ?? raw[2] ?? 0n),
+  };
+}
+

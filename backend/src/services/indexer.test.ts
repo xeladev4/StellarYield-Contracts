@@ -7,28 +7,22 @@ vi.mock("../logger.js", () => ({
 vi.mock("./stellar.js", () => ({ getSorobanRpc: vi.fn() }));
 vi.mock("./yield.js", () => ({ YieldService: vi.fn().mockImplementation(() => ({})) }));
 
-import { rpc, xdr, scValToNative } from "@stellar/stellar-sdk";
-import { Indexer } from "./indexer.js";
+import { rpc, xdr, Contract, nativeToScVal } from "@stellar/stellar-sdk";
+import { Indexer, parseDepositEvent, parseYieldDistributedEvent } from "./indexer.js";
 
-function makeScSymbol(name: string): xdr.ScVal {
-  return xdr.ScVal.scvSymbol(name);
-}
-
-function makeScAddress(addr: string): xdr.ScVal {
-  return xdr.ScVal.scvString(addr);
-}
+const VAULT_CONTRACT = "CDLZFC3SYJYHZDQA6M57EYUC2XBDA6LQF3M6KFRDZ7TXJYJL2K3B";
+const ACCOUNT = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
 
 function makeMockEvent(
   eventType: string,
   contractId: string,
-  topics: xdr.ScVal[] = [],
+  extraTopics: xdr.ScVal[] = [],
   valueData: xdr.ScVal = xdr.ScVal.scvVoid(),
 ): rpc.Api.EventResponse {
-  const { Contract } = await import("@stellar/stellar-sdk").then((m) => m);
   return {
     type: "contract",
     contractId: new Contract(contractId),
-    topic: [makeScSymbol(eventType), ...topics],
+    topic: [xdr.ScVal.scvSymbol(eventType), ...extraTopics],
     value: valueData,
     ledger: 1000,
     id: `event-${Math.random()}`,
@@ -41,7 +35,7 @@ function makeMockEvent(
   } as unknown as rpc.Api.EventResponse;
 }
 
-const VAULT_CONTRACT = "CDLZFC3SYJYHZDQA6M57EYUC2XBDA6LQF3M6KFRDZ7TXJYJL2K3B";
+// ── Indexer class tests ────────────────────────────────────────────────────────
 
 describe("Indexer", () => {
   let indexer: Indexer;
@@ -90,5 +84,50 @@ describe("Indexer", () => {
     await indexer.tick();
 
     expect(indexer["_lastLedger"]).toBe(1005);
+  });
+});
+
+// ── Standalone event parser tests ──────────────────────────────────────────────
+
+describe("Indexer Event Parsers", () => {
+  it("parses valid deposit event", () => {
+    const topics = [
+      nativeToScVal("deposit"),
+      nativeToScVal(ACCOUNT),
+      nativeToScVal(ACCOUNT),
+    ];
+    const data = nativeToScVal([1000n, 1000n]);
+
+    const result = parseDepositEvent({ topics, data });
+    expect(result).not.toBeNull();
+    expect(result?.caller).toBe(ACCOUNT);
+    expect(result?.receiver).toBe(ACCOUNT);
+    expect(result?.assets).toBe(1000n);
+    expect(result?.shares).toBe(1000n);
+  });
+
+  it("handles malformed deposit safely", () => {
+    expect(parseDepositEvent(null)).toBeNull();
+    expect(parseDepositEvent({})).toBeNull();
+    expect(parseDepositEvent({ topics: ["invalid_base64"], data: "invalid" })).toBeNull();
+  });
+
+  it("parses yield distributed event", () => {
+    const topics = [
+      nativeToScVal("yield_dis"),
+      nativeToScVal(5),
+    ];
+    const data = nativeToScVal([5000n, 123456789n]);
+
+    const result = parseYieldDistributedEvent({ topics, data });
+    expect(result).not.toBeNull();
+    expect(result?.epoch).toBe(5);
+    expect(result?.amount).toBe(5000n);
+    expect(result?.timestamp).toBe(123456789n);
+  });
+
+  it("handles malformed yield event safely", () => {
+    expect(parseYieldDistributedEvent(null)).toBeNull();
+    expect(parseYieldDistributedEvent({})).toBeNull();
   });
 });

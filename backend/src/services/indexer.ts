@@ -1,4 +1,4 @@
-import { rpc, scValToNative } from "@stellar/stellar-sdk";
+import { rpc, xdr, scValToNative } from "@stellar/stellar-sdk";
 import { config } from "../config.js";
 import { query } from "../db/index.js";
 import { logger } from "../logger.js";
@@ -153,14 +153,10 @@ export class Indexer {
     }
   }
 
-  // ── Stub handlers (filled in by subsequent commits) ────────────────────────
-
   protected async _handleDeposit(
     contractId: string,
     ev: rpc.Api.EventResponse,
   ): Promise<void> {
-    // topic: [Symbol("deposit"), caller, receiver]
-    // value: [assets, shares] or { assets, shares }
     const caller = decodeAddr(ev.topic[1]);
     const data = decodeValue(ev);
     const dataArr = Array.isArray(data) ? data : Object.values(data as Record<string, unknown>);
@@ -199,8 +195,6 @@ export class Indexer {
     contractId: string,
     ev: rpc.Api.EventResponse,
   ): Promise<void> {
-    // topic: [Symbol("withdraw"), caller, receiver, owner]
-    // value: [assets, shares]
     const owner = decodeAddr(ev.topic[3] ?? ev.topic[1]);
     const data = decodeValue(ev);
     const dataArr = Array.isArray(data) ? data : Object.values(data as Record<string, unknown>);
@@ -222,7 +216,6 @@ export class Indexer {
     }
     const vaultId = vaultRow[0].id;
 
-    // Decrement shares and deposited; clamp both to zero (never negative)
     await query(
       `INSERT INTO user_vault_positions (user_address, vault_id, shares, deposited)
        VALUES ($1, $2, 0, 0)
@@ -240,8 +233,6 @@ export class Indexer {
     contractId: string,
     ev: rpc.Api.EventResponse,
   ): Promise<void> {
-    // topic: [Symbol("yield_dis"), epoch]
-    // value: [amount, timestamp]  (per SDK parse.ts convention)
     const epoch = Number(decodeSymbol(ev.topic[1]) || 0) || (() => {
       try { return Number(scValToNative(ev.topic[1]) ?? 0); } catch { return 0; }
     })();
@@ -264,7 +255,6 @@ export class Indexer {
     }
     const vaultId = vaultRow[0].id;
 
-    // Read total_supply for shares denominator
     const supplyRow = await query<{ total_supply: string }>(
       "SELECT total_supply FROM vaults WHERE id = $1",
       [vaultId],
@@ -275,8 +265,6 @@ export class Indexer {
 
     logger.info({ contractId, epoch, amount: amount.toString() }, "Processed yield_distributed event");
   }
-
-  // ── Ledger state persistence ───────────────────────────────────────────────
 
   private async _loadLastLedger(): Promise<number> {
     try {
@@ -296,6 +284,98 @@ export class Indexer {
        ON CONFLICT (id) DO UPDATE SET last_ledger = EXCLUDED.last_ledger, updated_at = NOW()`,
       [ledger],
     );
+  }
+}
+
+// ── Standalone event parsers (exported for unit testing) ──────────────────────
+
+export interface ParsedDepositEvent {
+  caller: string;
+  receiver: string;
+  assets: bigint;
+  shares: bigint;
+}
+
+export function parseDepositEvent(rawEvent: unknown): ParsedDepositEvent | null {
+  try {
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
+
+    if (!Array.isArray(topics) || topics.length < 3 || value == null) return null;
+
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
+    );
+    const parsedValue =
+      typeof value === "string"
+        ? xdr.ScVal.fromXDR(value, "base64")
+        : (value as xdr.ScVal);
+
+    let eventName: string;
+    try {
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
+    } catch {
+      return null;
+    }
+    if (eventName !== "deposit") return null;
+
+    const caller = String(scValToNative(parsedTopics[1]) ?? "");
+    const receiver = String(scValToNative(parsedTopics[2]) ?? "");
+
+    const data = scValToNative(parsedValue);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const assets = decodeBigInt(arr[0]);
+    const shares = decodeBigInt(arr[1]);
+
+    return { caller, receiver, assets, shares };
+  } catch {
+    return null;
+  }
+}
+
+export interface ParsedYieldDistributedEvent {
+  epoch: number;
+  amount: bigint;
+  timestamp: bigint;
+}
+
+export function parseYieldDistributedEvent(rawEvent: unknown): ParsedYieldDistributedEvent | null {
+  try {
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
+
+    if (!Array.isArray(topics) || topics.length < 2 || value == null) return null;
+
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
+    );
+    const parsedValue =
+      typeof value === "string"
+        ? xdr.ScVal.fromXDR(value, "base64")
+        : (value as xdr.ScVal);
+
+    let eventName: string;
+    try {
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
+    } catch {
+      return null;
+    }
+    if (eventName !== "yield_dis") return null;
+
+    const epoch = Number(scValToNative(parsedTopics[1]) ?? 0);
+
+    const data = scValToNative(parsedValue);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const amount = decodeBigInt(arr[0]);
+    const timestamp = decodeBigInt(arr[1]);
+
+    return { epoch, amount, timestamp };
+  } catch {
+    return null;
   }
 }
 
