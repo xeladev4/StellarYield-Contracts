@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { query } from "../../db/index.js";
+import { validateWebhookUrl } from "../../services/notifications.js";
 
 interface WebhookRow {
   id: number;
@@ -16,6 +17,13 @@ function formatWebhook(w: WebhookRow) {
 export async function createWebhook(req: Request, res: Response, next: NextFunction) {
   try {
     const { url, events, secret } = req.body as { url: string; events: string[]; secret?: string };
+
+    try {
+      await validateWebhookUrl(url);
+    } catch (err: any) {
+      res.status(400).json({ error: "InvalidWebhookUrl", message: err.message });
+      return;
+    }
 
     const rows = await query<WebhookRow>(
       `INSERT INTO webhooks (url, events, secret)

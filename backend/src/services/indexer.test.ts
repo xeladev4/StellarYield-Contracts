@@ -1,22 +1,116 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseDepositEvent, parseYieldDistributedEvent } from "./indexer.js";
-import { nativeToScVal } from "@stellar/stellar-sdk";
+import { vi, describe, it, expect, beforeEach } from "vitest";
+
+vi.mock("../db/index.js", () => ({ query: vi.fn().mockResolvedValue([]) }));
+vi.mock("../logger.js", () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+vi.mock("./stellar.js", () => ({ getSorobanRpc: vi.fn() }));
+vi.mock("./vault.js", () => ({ VaultService: vi.fn().mockImplementation(() => ({})) }));
+vi.mock("./notifications.js", () => ({ NotificationService: vi.fn().mockImplementation(() => ({})) }));
+
+import { rpc, xdr, nativeToScVal } from "@stellar/stellar-sdk";
+import { Indexer, parseDepositEvent, parseYieldDistributedEvent } from "./indexer.js";
+import { getSorobanRpc } from "./stellar.js";
+
+const VAULT_CONTRACT = "CDLZFC3SYJYHZDQA6M57EYUC2XBDA6LQF3M6KFRDZ7TXJYJL2K3B";
+const ACCOUNT = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+
+function makeMockEvent(
+  eventType: string,
+  contractId: string,
+  extraTopics: xdr.ScVal[] = [],
+  valueData: xdr.ScVal = xdr.ScVal.scvVoid(),
+): rpc.Api.EventResponse {
+  return {
+    type: "contract",
+    contractId,
+    topic: [xdr.ScVal.scvSymbol(eventType), ...extraTopics],
+    value: valueData,
+    ledger: 1000,
+    id: `event-${Math.random()}`,
+    txHash: "abc123",
+    pagingToken: "",
+    ledgerClosedAt: new Date().toISOString(),
+    transactionIndex: 0,
+    operationIndex: 0,
+    inSuccessfulContractCall: true,
+  } as unknown as rpc.Api.EventResponse;
+}
+
+// ── Indexer class tests ────────────────────────────────────────────────────────
+
+describe("Indexer", () => {
+  let indexer: Indexer;
+  let mockServer: {
+    getLatestLedger: ReturnType<typeof vi.fn>;
+    getEvents: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockServer = {
+      getLatestLedger: vi.fn().mockResolvedValue({ sequence: 1010 }),
+      getEvents: vi.fn().mockResolvedValue({ events: [], latestLedger: 999 }),
+    };
+    (getSorobanRpc as any).mockReturnValue(mockServer);
+    indexer = new Indexer();
+    indexer["running"] = true;
+  });
+
+  it("passes both RPC events to processEvent", async () => {
+    const events = [
+      makeMockEvent("deposit", VAULT_CONTRACT),
+      makeMockEvent("withdraw", VAULT_CONTRACT),
+    ];
+    mockServer.getLatestLedger.mockResolvedValueOnce({ sequence: 1005 });
+    mockServer.getEvents.mockResolvedValueOnce({ events, latestLedger: 1005 });
+    const spy = vi.spyOn(indexer as any, "processEvent").mockResolvedValue(undefined);
+
+    await indexer.tick();
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledWith(events[0]);
+    expect(spy).toHaveBeenCalledWith(events[1]);
+  });
+
+  it("logs a warning and does not throw on RPC error", async () => {
+    mockServer.getLatestLedger.mockRejectedValueOnce(new Error("network error"));
+    const { logger } = await import("../logger.js");
+
+    await expect(indexer.tick()).resolves.not.toThrow();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("updates lastLedger to the latest ledger from getLatestLedger", async () => {
+    const events = [
+      { ...makeMockEvent("deposit", VAULT_CONTRACT), ledger: 1001 },
+      { ...makeMockEvent("deposit", VAULT_CONTRACT), ledger: 1005 },
+    ];
+    mockServer.getLatestLedger.mockResolvedValueOnce({ sequence: 1010 });
+    mockServer.getEvents.mockResolvedValueOnce({ events, latestLedger: 1010 });
+    vi.spyOn(indexer as any, "processEvent").mockResolvedValue(undefined);
+
+    await indexer.tick();
+
+    expect(indexer.lastLedger).toBe(1010);
+  });
+});
+
+// ── Standalone event parser tests ──────────────────────────────────────────────
 
 describe("Indexer Event Parsers", () => {
-  const account = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
-
   it("parses valid deposit event", () => {
     const topics = [
       nativeToScVal("deposit"),
-      nativeToScVal(account),
-      nativeToScVal(account),
+      nativeToScVal(ACCOUNT),
+      nativeToScVal(ACCOUNT),
     ];
     const data = nativeToScVal([1000n, 1000n]);
 
     const result = parseDepositEvent({ topics, data });
     expect(result).not.toBeNull();
-    expect(result?.caller).toBe(account);
-    expect(result?.receiver).toBe(account);
+    expect(result?.caller).toBe(ACCOUNT);
+    expect(result?.receiver).toBe(ACCOUNT);
     expect(result?.assets).toBe(1000n);
     expect(result?.shares).toBe(1000n);
   });
@@ -47,22 +141,7 @@ describe("Indexer Event Parsers", () => {
   });
 });
 
-vi.mock("./stellar.js", () => ({
-  getSorobanRpc: vi.fn(),
-}));
-
-vi.mock("../db/index.js", () => ({
-  query: vi.fn(),
-}));
-
-vi.mock("../logger.js", () => ({
-  logger: {
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
+// ── Indexer tick tests ─────────────────────────────────────────────────────────
 
 describe("Indexer tick", () => {
   const account = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";

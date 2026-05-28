@@ -6,6 +6,8 @@ import { getSorobanRpc } from "./stellar.js";
 import { VaultService } from "./vault.js";
 import { NotificationService } from "./notifications.js";
 
+// ── Upstream helpers ───────────────────────────────────────────────────────────
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -52,6 +54,60 @@ async function withBackoff<T>(
   }
 }
 
+// ── Decode helpers (exported for testing) ─────────────────────────────────────
+
+export function decodeSymbol(topic: any): string {
+  try {
+    return String(scValToNative(topic) ?? "");
+  } catch {
+    return "";
+  }
+}
+
+export function decodeAddr(topic: any): string {
+  try {
+    const v = scValToNative(topic);
+    return typeof v === "string" ? v : String(v ?? "");
+  } catch {
+    return "";
+  }
+}
+
+export function decodeBigInt(val: unknown): bigint {
+  if (typeof val === "bigint") return val;
+  if (typeof val === "number") return BigInt(Math.trunc(val));
+  if (typeof val === "string" && /^-?\d+$/.test(val)) return BigInt(val);
+  if (Array.isArray(val) && val.length > 0) return decodeBigInt(val[0]);
+  if (val && typeof val === "object") {
+    const first = Object.values(val as Record<string, unknown>)[0];
+    if (first !== undefined) return decodeBigInt(first);
+  }
+  return 0n;
+}
+
+export function decodeValue(ev: any): unknown {
+  try {
+    return scValToNative(ev.value);
+  } catch {
+    return null;
+  }
+}
+
+export async function storeIndexedEvent(
+  contractId: string,
+  eventType: string,
+  ev: any,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await query(
+    `INSERT INTO indexed_events (ledger, tx_hash, contract_id, event_type, payload)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [ev.ledger, ev.txHash, contractId, eventType, JSON.stringify(payload)],
+  );
+}
+
+// ── Indexer ────────────────────────────────────────────────────────────────────
+
 export class Indexer {
   lastLedger: number;
   private running = false;
@@ -66,11 +122,10 @@ export class Indexer {
     this.vaultService = new VaultService();
     this.notificationService = notificationService;
 
-    // Validate contract ID at startup (#449)
     if (!this.vaultFactoryContractId) {
       logger.warn(
         "VAULT_FACTORY_CONTRACT_ID is not configured. Event polling will be skipped. " +
-        "Only indexer_state will be updated. Please set VAULT_FACTORY_CONTRACT_ID to enable event indexing."
+        "Only indexer_state will be updated. Please set VAULT_FACTORY_CONTRACT_ID to enable event indexing.",
       );
     }
   }
@@ -82,7 +137,6 @@ export class Indexer {
       this.lastLedger = await this.getLastIndexedLedger();
       logger.info({ ledger: this.lastLedger }, `resuming from ledger ${this.lastLedger}`);
 
-      // If no contract ID is configured, keep the indexer alive and advance state only.
       if (!this.vaultFactoryContractId) {
         logger.info("Indexer started in state-only mode (no contract ID configured)");
         while (this.running) {
@@ -115,10 +169,6 @@ export class Indexer {
     this.running = false;
   }
 
-  /**
-   * State-only tick: updates indexer_state without fetching events.
-   * Used when VAULT_FACTORY_CONTRACT_ID is not configured (#449).
-   */
   private async tickStateOnly(): Promise<void> {
     const server = getSorobanRpc();
 
@@ -132,21 +182,14 @@ export class Indexer {
     }
 
     if (latestLedger <= this.lastLedger) {
-      logger.info(
-        { latestLedger, lastLedger: this.lastLedger },
-        "no events",
-      );
+      logger.info({ latestLedger, lastLedger: this.lastLedger }, "no new ledgers");
       this.lastTickAt = new Date();
       return;
     }
 
     this.lastLedger = latestLedger;
     await this.saveLastIndexedLedger(latestLedger);
-
-    logger.info(
-      { ledger: latestLedger },
-      "no events",
-    );
+    logger.info({ ledger: latestLedger }, "state-only tick complete");
     this.lastTickAt = new Date();
   }
 
@@ -165,8 +208,6 @@ export class Indexer {
     if (latestLedger <= this.lastLedger) return;
 
     const from = this.lastLedger + 1;
-
-    // Build filters with contract ID (#449)
     const filters = this.vaultFactoryContractId
       ? [{ contractIds: [this.vaultFactoryContractId] }]
       : [];
@@ -205,7 +246,6 @@ export class Indexer {
     const server = getSorobanRpc();
     let cursor = this.lastLedger;
 
-    // Build filters with contract ID (#449)
     const filters = this.vaultFactoryContractId
       ? [{ contractIds: [this.vaultFactoryContractId] }]
       : [];
@@ -243,7 +283,7 @@ export class Indexer {
     }
   }
 
-  private async processEvent(event: any): Promise<void> {
+  async processEvent(event: any): Promise<void> {
     const existing = await query(
       "SELECT id FROM indexed_events WHERE tx_hash = $1 AND contract_id = $2 AND event_type = $3 AND ledger = $4",
       [event.id ?? event.txHash ?? "", event.contractId ?? "", event.type ?? "", event.ledger ?? 0],
@@ -262,8 +302,21 @@ export class Indexer {
       return;
     }
 
+    const withdraw = parseWithdrawEvent(event);
+    if (withdraw) {
+      await this.handleWithdraw(event.contractId ?? "", withdraw);
+      await this.recordEvent(event, "withdraw");
+      try {
+        await this.notificationService?.notify("withdraw", withdraw as any);
+      } catch (e) {
+        logger.warn({ err: e }, "NotificationService.notify failed for withdraw");
+      }
+      return;
+    }
+
     const yieldDist = parseYieldDistributedEvent(event);
     if (yieldDist) {
+      await this.handleYieldDistributed(event.contractId ?? "", yieldDist);
       await this.recordEvent(event, "yield_distributed");
       try {
         await this.notificationService?.notify("yield_distributed", yieldDist as any);
@@ -325,6 +378,62 @@ export class Indexer {
          updated_at = NOW()`,
       [deposit.receiver, deposit.shares.toString(), deposit.assets.toString(), contractId],
     );
+    logger.info(
+      { contractId, receiver: deposit.receiver, shares: deposit.shares.toString() },
+      "Processed deposit event",
+    );
+  }
+
+  private async handleWithdraw(
+    contractId: string,
+    withdraw: { owner: string; assets: bigint; shares: bigint },
+  ): Promise<void> {
+    await query(
+      `INSERT INTO user_vault_positions (user_address, vault_id, shares, deposited)
+       SELECT $1, v.id, 0, 0
+       FROM vaults v WHERE v.contract_id = $4
+       ON CONFLICT (user_address, vault_id) DO UPDATE SET
+         shares    = GREATEST(0, user_vault_positions.shares    - $2),
+         deposited = GREATEST(0, user_vault_positions.deposited - $3),
+         updated_at = NOW()`,
+      [withdraw.owner, withdraw.shares.toString(), withdraw.assets.toString(), contractId],
+    );
+    logger.info(
+      { contractId, owner: withdraw.owner, shares: withdraw.shares.toString() },
+      "Processed withdraw event",
+    );
+  }
+
+  private async handleYieldDistributed(
+    contractId: string,
+    yieldDist: { epoch: number; amount: bigint; timestamp: bigint },
+  ): Promise<void> {
+    const vaultRow = await query<{ id: number }>(
+      "SELECT id FROM vaults WHERE contract_id = $1",
+      [contractId],
+    );
+    if (vaultRow.length === 0) {
+      logger.warn({ contractId }, "yield_distributed for unknown vault — skipping epoch record");
+      return;
+    }
+    const vaultId = vaultRow[0].id;
+
+    const supplyRow = await query<{ total_supply: string }>(
+      "SELECT total_supply FROM vaults WHERE id = $1",
+      [vaultId],
+    );
+    const totalShares = supplyRow[0]?.total_supply ?? "0";
+
+    await query(
+      `INSERT INTO epochs (vault_id, epoch, yield_amount, total_shares, distributed_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (vault_id, epoch) DO NOTHING`,
+      [vaultId, yieldDist.epoch, yieldDist.amount.toString(), totalShares],
+    );
+    logger.info(
+      { contractId, epoch: yieldDist.epoch, amount: yieldDist.amount.toString() },
+      "Processed yield_distributed event",
+    );
   }
 
   private async handleVaultCreated(
@@ -335,7 +444,6 @@ export class Indexer {
       { vault: vaultCreated.contractId, factoryId, name: vaultCreated.name },
       "Processing vault_created event",
     );
-
     await this.vaultService.upsertVault({
       contractId: vaultCreated.contractId,
       factoryId,
@@ -374,7 +482,8 @@ export class Indexer {
 
   async saveLastIndexedLedger(ledger: number): Promise<void> {
     await query(
-      "UPDATE indexer_state SET last_ledger = $1",
+      `INSERT INTO indexer_state (id, last_ledger) VALUES (1, $1)
+       ON CONFLICT (id) DO UPDATE SET last_ledger = EXCLUDED.last_ledger, updated_at = NOW()`,
       [ledger],
     );
   }
@@ -390,42 +499,138 @@ export class Indexer {
   }
 }
 
-export function parseDepositEvent(rawEvent: any): {
+// ── Standalone event parsers (exported for unit testing) ──────────────────────
+
+export interface ParsedDepositEvent {
   caller: string;
   receiver: string;
   assets: bigint;
   shares: bigint;
-} | null {
+}
+
+export function parseDepositEvent(rawEvent: unknown): ParsedDepositEvent | null {
   try {
-    const topics = rawEvent?.topic || rawEvent?.topics;
-    const value = rawEvent?.value || rawEvent?.data;
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
 
-    if (!topics || topics.length < 3 || !value) return null;
+    if (!Array.isArray(topics) || topics.length < 3 || value == null) return null;
 
-    const parsedTopics = topics.map((t: any) =>
-      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : t
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
     );
     const parsedValue = typeof value === "string"
       ? xdr.ScVal.fromXDR(value, "base64")
       : value;
 
-    let eventName = "";
+    let eventName: string;
     try {
-      eventName = scValToNative(parsedTopics[0]);
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
     } catch {
       return null;
     }
-
     if (eventName !== "deposit") return null;
 
-    const caller = scValToNative(parsedTopics[1]) as string;
-    const receiver = scValToNative(parsedTopics[2]) as string;
+    const caller = String(scValToNative(parsedTopics[1]) ?? "");
+    const receiver = String(scValToNative(parsedTopics[2]) ?? "");
 
-    const data = scValToNative(parsedValue) as any;
-    const assets = BigInt(Array.isArray(data) ? data[0] : (data?.assets ?? 0));
-    const shares = BigInt(Array.isArray(data) ? data[1] : (data?.shares ?? 0));
+    const data = scValToNative(parsedValue as xdr.ScVal);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const assets = decodeBigInt(arr[0]);
+    const shares = decodeBigInt(arr[1]);
 
     return { caller, receiver, assets, shares };
+  } catch {
+    return null;
+  }
+}
+
+export interface ParsedWithdrawEvent {
+  caller: string;
+  receiver: string;
+  owner: string;
+  assets: bigint;
+  shares: bigint;
+}
+
+export function parseWithdrawEvent(rawEvent: unknown): ParsedWithdrawEvent | null {
+  try {
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
+
+    if (!Array.isArray(topics) || topics.length < 4 || value == null) return null;
+
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
+    );
+    const parsedValue = typeof value === "string"
+      ? xdr.ScVal.fromXDR(value, "base64")
+      : value;
+
+    let eventName: string;
+    try {
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
+    } catch {
+      return null;
+    }
+    if (eventName !== "withdraw") return null;
+
+    const caller = String(scValToNative(parsedTopics[1]) ?? "");
+    const receiver = String(scValToNative(parsedTopics[2]) ?? "");
+    const owner = String(scValToNative(parsedTopics[3]) ?? "");
+
+    const data = scValToNative(parsedValue as xdr.ScVal);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const assets = decodeBigInt(arr[0]);
+    const shares = decodeBigInt(arr[1]);
+
+    return { caller, receiver, owner, assets, shares };
+  } catch {
+    return null;
+  }
+}
+
+export interface ParsedYieldDistributedEvent {
+  epoch: number;
+  amount: bigint;
+  timestamp: bigint;
+}
+
+export function parseYieldDistributedEvent(rawEvent: unknown): ParsedYieldDistributedEvent | null {
+  try {
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
+
+    if (!Array.isArray(topics) || topics.length < 2 || value == null) return null;
+
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
+    );
+    const parsedValue = typeof value === "string"
+      ? xdr.ScVal.fromXDR(value, "base64")
+      : value;
+
+    let eventName: string;
+    try {
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
+    } catch {
+      return null;
+    }
+    if (eventName !== "yield_dis") return null;
+
+    const epoch = Number(scValToNative(parsedTopics[1]) ?? 0);
+
+    const data = scValToNative(parsedValue as xdr.ScVal);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const amount = decodeBigInt(arr[0]);
+    const timestamp = decodeBigInt(arr[1]);
+
+    return { epoch, amount, timestamp };
   } catch {
     return null;
   }
@@ -460,45 +665,6 @@ export function parseVaultStateChangedEvent(rawEvent: any): {
     const newState = String(native?.newState ?? (Array.isArray(native) ? native[1] : ""));
 
     return { oldState, newState };
-  } catch {
-    return null;
-  }
-}
-
-export function parseYieldDistributedEvent(rawEvent: any): {
-  epoch: number;
-  amount: bigint;
-  timestamp: bigint;
-} | null {
-  try {
-    const topics = rawEvent?.topic || rawEvent?.topics;
-    const value = rawEvent?.value || rawEvent?.data;
-
-    if (!topics || topics.length < 2 || !value) return null;
-
-    const parsedTopics = topics.map((t: any) =>
-      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : t
-    );
-    const parsedValue = typeof value === "string"
-      ? xdr.ScVal.fromXDR(value, "base64")
-      : value;
-
-    let eventName = "";
-    try {
-      eventName = scValToNative(parsedTopics[0]);
-    } catch {
-      return null;
-    }
-
-    if (eventName !== "yield_dis") return null;
-
-    const epoch = Number(scValToNative(parsedTopics[1]));
-
-    const data = scValToNative(parsedValue) as any;
-    const amount = BigInt(Array.isArray(data) ? data[0] : (data?.amount ?? 0));
-    const timestamp = BigInt(Array.isArray(data) ? data[1] : (data?.timestamp ?? 0));
-
-    return { epoch, amount, timestamp };
   } catch {
     return null;
   }
