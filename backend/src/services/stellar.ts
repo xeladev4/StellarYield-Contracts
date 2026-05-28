@@ -20,7 +20,7 @@ async function simulateRead<T>(
 
   // Throwaway source account — sequence number 0 is fine for simulation only.
   const source = new Account(
-    "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
     "0",
   );
 
@@ -125,8 +125,11 @@ export async function readShareBalance(
  *
  * Closes #429
  */
-export async function readCurrentEpoch(contractId: string): Promise<number> {
-  const state = await readVaultState(contractId);
+export async function readCurrentEpoch(
+  contractId: string,
+  _readVaultState: (id: string) => Promise<VaultState> = readVaultState,
+): Promise<number> {
+  const state = await _readVaultState(contractId);
   if (state === "Funding") {
     return 0;
   }
@@ -157,7 +160,7 @@ export async function readEpochData(
   let raw: any;
   try {
     raw = await simulateRead<any>(contractId, "get_epoch_data", [epochArg]);
-  } catch (err: any) {
+  } catch (_err: any) {
     return { yieldAmount: 0n, totalShares: 0n, timestamp: 0n };
   }
 

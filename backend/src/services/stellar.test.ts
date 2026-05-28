@@ -1,21 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readCurrentEpoch, readEpochData } from "./stellar.js";
-
-// Mock the readVaultState and simulateRead dependencies
-vi.mock("./stellar.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./stellar.js")>();
-  return {
-    ...actual,
-    readVaultState: vi.fn(),
-  };
-});
 
 describe("Stellar SDK Helper Methods", () => {
   it("readCurrentEpoch returns 0 for Funding state", async () => {
-    const { readVaultState } = await import("./stellar.js");
-    (readVaultState as any).mockResolvedValue("Funding");
-    
-    const epoch = await readCurrentEpoch("CC_ANY");
+    const epoch = await readCurrentEpoch("CC_ANY", async () => "Funding");
     expect(epoch).toBe(0);
   });
 
