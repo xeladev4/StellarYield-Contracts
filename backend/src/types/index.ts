@@ -1,4 +1,9 @@
-export type VaultState = "Funding" | "Active" | "Matured" | "Closed" | "Cancelled";
+export type VaultState =
+  | "Funding"
+  | "Active"
+  | "Matured"
+  | "Closed"
+  | "Cancelled";
 
 export interface Vault {
   id: number;
@@ -30,6 +35,11 @@ export interface UserVaultPosition {
   deposited: string;
   lastClaimedEpoch: number;
   updatedAt: Date;
+}
+
+export interface UserPortfolioResponse {
+  positions: UserVaultPosition[];
+  totalDeposited: string;
 }
 
 export interface Epoch {

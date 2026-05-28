@@ -39,6 +39,11 @@ const envSchema = z.object({
     .default("5000")
     .transform((v) => parseInt(v, 10))
     .pipe(z.number().int().min(100)),
+  INDEXER_BATCH_SIZE: z
+    .string()
+    .default("200")
+    .transform((v) => parseInt(v, 10))
+    .pipe(z.number().int().min(1)),
   WEBHOOK_SECRET: z
     .string()
     .default(""),
@@ -48,6 +53,16 @@ const envSchema = z.object({
   ALLOWED_ORIGINS: z
     .string()
     .default(""),
+  RATE_LIMIT_PUBLIC: z
+    .string()
+    .default("60")
+    .transform((v) => parseInt(v, 10))
+    .pipe(z.number().int().min(1)),
+  RATE_LIMIT_AUTH: z
+    .string()
+    .default("300")
+    .transform((v) => parseInt(v, 10))
+    .pipe(z.number().int().min(1)),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -79,6 +94,7 @@ export const config = {
   indexer: {
     startLedger: parsed.data.INDEXER_START_LEDGER,
     pollIntervalMs: parsed.data.INDEXER_POLL_INTERVAL_MS,
+    batchSize: parsed.data.INDEXER_BATCH_SIZE,
   },
 
   allowedOrigins: (() => {
@@ -90,4 +106,9 @@ export const config = {
 
   webhookSecret: parsed.data.WEBHOOK_SECRET,
   logLevel: parsed.data.LOG_LEVEL,
+
+  rateLimit: {
+    public: parsed.data.RATE_LIMIT_PUBLIC,
+    auth: parsed.data.RATE_LIMIT_AUTH,
+  },
 } as const;

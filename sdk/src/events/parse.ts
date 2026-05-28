@@ -81,10 +81,9 @@ export type ParsedStellarYieldEvent =
   | {
       kind: "vault_created";
       contractId: string;
-      vault: string;
-      vaultType: string;
+      asset: string;
       name: string;
-      creator: string;
+      symbol: string;
     }
   | {
       kind: "vault_status_changed";
@@ -244,11 +243,10 @@ export function parseVaultEvents(
       const d = data as unknown[];
       out.push({
         kind: "vault_created",
-        contractId: cid,
-        vault: asStr(topics[1]),
-        vaultType: asStr(d[0]),
-        name: asStr(d[1]),
-        creator: asStr(d[2]),
+        contractId: asStr(topics[1]),
+        asset: asStr((d as any)?.asset ?? d[0]),
+        name: asStr((d as any)?.name ?? d[1]),
+        symbol: asStr((d as any)?.symbol ?? d[2]),
       });
       continue;
     }

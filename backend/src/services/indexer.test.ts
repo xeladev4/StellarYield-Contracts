@@ -5,10 +5,12 @@ vi.mock("../logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("./stellar.js", () => ({ getSorobanRpc: vi.fn() }));
-vi.mock("./yield.js", () => ({ YieldService: vi.fn().mockImplementation(() => ({})) }));
+vi.mock("./vault.js", () => ({ VaultService: vi.fn().mockImplementation(() => ({})) }));
+vi.mock("./notifications.js", () => ({ NotificationService: vi.fn().mockImplementation(() => ({})) }));
 
-import { rpc, xdr, Contract, nativeToScVal } from "@stellar/stellar-sdk";
+import { rpc, xdr, nativeToScVal } from "@stellar/stellar-sdk";
 import { Indexer, parseDepositEvent, parseYieldDistributedEvent } from "./indexer.js";
+import { getSorobanRpc } from "./stellar.js";
 
 const VAULT_CONTRACT = "CDLZFC3SYJYHZDQA6M57EYUC2XBDA6LQF3M6KFRDZ7TXJYJL2K3B";
 const ACCOUNT = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
@@ -21,7 +23,7 @@ function makeMockEvent(
 ): rpc.Api.EventResponse {
   return {
     type: "contract",
-    contractId: new Contract(contractId),
+    contractId,
     topic: [xdr.ScVal.scvSymbol(eventType), ...extraTopics],
     value: valueData,
     ledger: 1000,
@@ -39,15 +41,20 @@ function makeMockEvent(
 
 describe("Indexer", () => {
   let indexer: Indexer;
-  let mockServer: { getEvents: ReturnType<typeof vi.fn> };
+  let mockServer: {
+    getLatestLedger: ReturnType<typeof vi.fn>;
+    getEvents: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockServer = {
+      getLatestLedger: vi.fn().mockResolvedValue({ sequence: 1010 }),
       getEvents: vi.fn().mockResolvedValue({ events: [], latestLedger: 999 }),
     };
-    indexer = new Indexer({ server: mockServer as unknown as rpc.Server });
-    indexer["_running"] = true;
+    (getSorobanRpc as any).mockReturnValue(mockServer);
+    indexer = new Indexer();
+    indexer["running"] = true;
   });
 
   it("passes both RPC events to processEvent", async () => {
@@ -55,8 +62,9 @@ describe("Indexer", () => {
       makeMockEvent("deposit", VAULT_CONTRACT),
       makeMockEvent("withdraw", VAULT_CONTRACT),
     ];
+    mockServer.getLatestLedger.mockResolvedValueOnce({ sequence: 1005 });
     mockServer.getEvents.mockResolvedValueOnce({ events, latestLedger: 1005 });
-    const spy = vi.spyOn(indexer, "processEvent").mockResolvedValue(undefined);
+    const spy = vi.spyOn(indexer as any, "processEvent").mockResolvedValue(undefined);
 
     await indexer.tick();
 
@@ -66,24 +74,25 @@ describe("Indexer", () => {
   });
 
   it("logs a warning and does not throw on RPC error", async () => {
-    mockServer.getEvents.mockRejectedValueOnce(new Error("network error"));
+    mockServer.getLatestLedger.mockRejectedValueOnce(new Error("network error"));
     const { logger } = await import("../logger.js");
 
     await expect(indexer.tick()).resolves.not.toThrow();
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it("updates lastLedger to the highest ledger seen", async () => {
+  it("updates lastLedger to the latest ledger from getLatestLedger", async () => {
     const events = [
       { ...makeMockEvent("deposit", VAULT_CONTRACT), ledger: 1001 },
       { ...makeMockEvent("deposit", VAULT_CONTRACT), ledger: 1005 },
     ];
+    mockServer.getLatestLedger.mockResolvedValueOnce({ sequence: 1010 });
     mockServer.getEvents.mockResolvedValueOnce({ events, latestLedger: 1010 });
-    vi.spyOn(indexer, "processEvent").mockResolvedValue(undefined);
+    vi.spyOn(indexer as any, "processEvent").mockResolvedValue(undefined);
 
     await indexer.tick();
 
-    expect(indexer["_lastLedger"]).toBe(1005);
+    expect(indexer.lastLedger).toBe(1010);
   });
 });
 
@@ -129,5 +138,79 @@ describe("Indexer Event Parsers", () => {
   it("handles malformed yield event safely", () => {
     expect(parseYieldDistributedEvent(null)).toBeNull();
     expect(parseYieldDistributedEvent({})).toBeNull();
+  });
+});
+
+// ── Indexer tick tests ─────────────────────────────────────────────────────────
+
+describe("Indexer tick", () => {
+  const account = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("leaves lastLedger unchanged when no new ledgers are available", async () => {
+    const { getSorobanRpc } = await import("./stellar.js");
+    const { Indexer } = await import("./indexer.js");
+    const { query } = await import("../db/index.js");
+
+    (getSorobanRpc as any).mockReturnValue({
+      getLatestLedger: vi.fn().mockResolvedValue({ sequence: 0 }),
+      getEvents: vi.fn(),
+    });
+    (query as any).mockResolvedValue([]);
+
+    const indexer = new Indexer();
+    const before = indexer.lastLedger;
+    await indexer.tick();
+
+    expect(indexer.lastLedger).toBe(before);
+  });
+
+  it("updates user_vault_positions on a deposit event", async () => {
+    const { getSorobanRpc } = await import("./stellar.js");
+    const { Indexer } = await import("./indexer.js");
+    const { query } = await import("../db/index.js");
+
+    const depositEvent = {
+      id: "0000000001",
+      contractId: "CCONTRACT123",
+      type: "contract",
+      ledger: 100,
+      txHash: "abc123",
+      topic: [
+        nativeToScVal("deposit"),
+        nativeToScVal(account),
+        nativeToScVal(account),
+      ],
+      value: nativeToScVal([500n, 500n]),
+    };
+
+    (getSorobanRpc as any).mockReturnValue({
+      getLatestLedger: vi.fn().mockResolvedValue({ sequence: 100 }),
+      getEvents: vi.fn().mockResolvedValue({ events: [depositEvent], latestLedger: 100 }),
+    });
+    (query as any).mockResolvedValue([]);
+
+    const indexer = new Indexer();
+    await indexer.tick();
+
+    const calls: string[] = (query as any).mock.calls.map((c: any[]) => c[0] as string);
+    expect(calls.some((sql) => sql.includes("user_vault_positions"))).toBe(true);
+  });
+
+  it("logs a warning and does not crash when RPC throws", async () => {
+    const { getSorobanRpc } = await import("./stellar.js");
+    const { Indexer } = await import("./indexer.js");
+    const { logger } = await import("../logger.js");
+
+    (getSorobanRpc as any).mockReturnValue({
+      getLatestLedger: vi.fn().mockRejectedValue(new Error("RPC unavailable")),
+    });
+
+    const indexer = new Indexer();
+    await expect(indexer.tick()).resolves.toBeUndefined();
+    expect((logger.warn as any).mock.calls.length).toBeGreaterThan(0);
   });
 });

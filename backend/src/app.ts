@@ -5,7 +5,10 @@ import { healthRouter } from "./api/routes/health.js";
 import { vaultsRouter } from "./api/routes/vaults.js";
 import { usersRouter } from "./api/routes/users.js";
 import { yieldsRouter } from "./api/routes/yields.js";
+import { adminRouter } from "./api/routes/admin.js";
+import { webhooksRouter } from "./api/routes/webhooks.js";
 import { errorHandler } from "./api/middleware/errors.js";
+import { publicLimiter, authLimiter } from "./api/middleware/rateLimit.js";
 
 export function createApp(): Express {
   const app = express();
@@ -18,10 +21,12 @@ export function createApp(): Express {
     app.use(cors({ origin }));
   }
 
-  app.use("/health", healthRouter);
-  app.use("/api/v1/vaults", vaultsRouter);
-  app.use("/api/v1/users", usersRouter);
-  app.use("/api/v1/yields", yieldsRouter);
+  app.use("/health", publicLimiter, healthRouter);
+  app.use("/api/v1/vaults", publicLimiter, vaultsRouter);
+  app.use("/api/v1/users", publicLimiter, usersRouter);
+  app.use("/api/v1/yields", publicLimiter, yieldsRouter);
+  app.use("/api/v1/admin", authLimiter, adminRouter);
+  app.use("/api/v1/webhooks", authLimiter, webhooksRouter);
 
   app.use(errorHandler);
 

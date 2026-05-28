@@ -1,22 +1,16 @@
-import pg, { type QueryResultRow } from "pg";
+import pg from "pg";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 
 const { Pool } = pg;
 
-export const pool = new Pool({
-  connectionString: config.db.url,
-});
+export const pool = new Pool({ connectionString: config.db.url });
 
-pool.on("error", (err) => {
-  logger.error(err, "Unexpected database pool error");
-});
-
-export async function query<T extends QueryResultRow = Record<string, unknown>>(
+export async function query<T = Record<string, unknown>>(
   sql: string,
   params?: unknown[],
 ): Promise<T[]> {
-  const result = await pool.query<T>(sql, params);
+  const result = await pool.query(sql, params);
   return result.rows;
 }
 

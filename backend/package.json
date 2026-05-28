@@ -12,7 +12,8 @@
     "lint": "eslint src",
     "test": "vitest run",
     "db:migrate": "node dist/db/migrate.js",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:seed": "tsx src/db/seed.ts",
+    "generate-key": "tsx src/scripts/generate-api-key.ts"
   },
   "engines": {
     "node": ">=20"
@@ -21,19 +22,20 @@
     "@stellar/stellar-sdk": "^14.0.0",
     "@stellaryield/sdk": "file:../sdk",
     "cors": "^2.8.5",
-    "express": "^4.21.0",
-    "zod": "^3.23.0",
-    "pg": "^8.13.0",
     "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^8.5.2",
+    "pg": "^8.13.0",
     "pino": "^9.5.0",
-    "pino-http": "^10.3.0"
+    "pino-http": "^10.3.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.15.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.0",
-    "@eslint/js": "^9.15.0",
     "eslint": "^9.15.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.3",

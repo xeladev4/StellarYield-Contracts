@@ -85,7 +85,7 @@ npm run dev
 | `STELLAR_NETWORK` | No | `testnet` | Stellar network name. |
 | `STELLAR_RPC_URL` | No | Soroban testnet RPC | Stellar RPC endpoint. |
 | `STELLAR_NETWORK_PASSPHRASE` | No | Testnet passphrase | Network passphrase. |
-| `VAULT_FACTORY_CONTRACT_ID` | No | empty | Vault factory contract ID. |
+| `VAULT_FACTORY_CONTRACT_ID` | **Recommended** | empty | Vault factory contract ID. **Required for event indexing.** If empty, the indexer will skip event polling and only update `indexer_state`, logging a warning at startup. |
 | `ZKME_VERIFIER_CONTRACT_ID` | No | empty | zkMe verifier contract ID. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. |
 | `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Indexer polling interval. |
@@ -98,6 +98,8 @@ connects to the `postgres` service.
 
 - `GET /health` - service and database health check.
 - `GET /api/v1/vaults` - list vaults.
+- `GET /api/v1/vaults/count` - return the total number of vaults.
+- `GET /api/v1/vaults/factory/:factoryId` - list vaults for a factory.
 - `GET /api/v1/vaults/:contractId` - get a vault by contract ID.
 - `GET /api/v1/vaults/:contractId/positions` - list vault positions.
 - `GET /api/v1/users/:address` - get a user by Stellar address.
