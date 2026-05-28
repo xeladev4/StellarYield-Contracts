@@ -37,9 +37,19 @@ async function withBackoff<T>(
 export class Indexer {
   lastLedger: number;
   private running = false;
+  private readonly vaultFactoryContractId: string;
 
   constructor() {
     this.lastLedger = config.indexer.startLedger;
+    this.vaultFactoryContractId = config.stellar.vaultFactoryContractId;
+
+    // Validate contract ID at startup (#449)
+    if (!this.vaultFactoryContractId) {
+      logger.warn(
+        "VAULT_FACTORY_CONTRACT_ID is not configured. Event polling will be skipped. " +
+        "Only indexer_state will be updated. Please set VAULT_FACTORY_CONTRACT_ID to enable event indexing."
+      );
+    }
   }
 
   async start(): Promise<void> {
@@ -50,6 +60,16 @@ export class Indexer {
     );
     if (rows.length > 0) {
       this.lastLedger = rows[0].last_ledger;
+    }
+
+    // If no contract ID is configured, skip event polling (#449)
+    if (!this.vaultFactoryContractId) {
+      logger.info("Indexer started in state-only mode (no contract ID configured)");
+      while (this.running) {
+        await this.tickStateOnly();
+        await wait(config.indexer.pollIntervalMs);
+      }
+      return;
     }
 
     const server = getSorobanRpc();
@@ -70,6 +90,33 @@ export class Indexer {
     this.running = false;
   }
 
+  /**
+   * State-only tick: updates indexer_state without fetching events.
+   * Used when VAULT_FACTORY_CONTRACT_ID is not configured (#449).
+   */
+  private async tickStateOnly(): Promise<void> {
+    const server = getSorobanRpc();
+
+    let latestLedger: number;
+    try {
+      const resp = await withBackoff(() => server.getLatestLedger());
+      latestLedger = resp.sequence;
+    } catch (err) {
+      logger.warn({ err }, "RPC error fetching latest ledger during state-only tick");
+      return;
+    }
+
+    if (latestLedger <= this.lastLedger) return;
+
+    this.lastLedger = latestLedger;
+    await this.persistLastLedger();
+
+    logger.debug(
+      { ledger: latestLedger },
+      "State-only tick complete (no events fetched)",
+    );
+  }
+
   async tick(): Promise<void> {
     const server = getSorobanRpc();
 
@@ -86,10 +133,15 @@ export class Indexer {
 
     const from = this.lastLedger + 1;
 
+    // Build filters with contract ID (#449)
+    const filters = this.vaultFactoryContractId
+      ? [{ contractIds: [this.vaultFactoryContractId] }]
+      : [];
+
     let events: any[];
     try {
       const resp = await withBackoff(() =>
-        server.getEvents({ startLedger: from, filters: [] }),
+        server.getEvents({ startLedger: from, filters }),
       );
       events = resp.events;
     } catch (err) {
@@ -119,6 +171,11 @@ export class Indexer {
     const server = getSorobanRpc();
     let cursor = this.lastLedger;
 
+    // Build filters with contract ID (#449)
+    const filters = this.vaultFactoryContractId
+      ? [{ contractIds: [this.vaultFactoryContractId] }]
+      : [];
+
     while (cursor < tipLedger) {
       const batchTo = Math.min(cursor + batchSize, tipLedger);
       const remaining = tipLedger - batchTo;
@@ -130,7 +187,7 @@ export class Indexer {
 
       try {
         const resp = await withBackoff(() =>
-          server.getEvents({ startLedger: cursor + 1, filters: [] }),
+          server.getEvents({ startLedger: cursor + 1, filters }),
         );
 
         for (const event of resp.events) {

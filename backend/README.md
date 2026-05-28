@@ -85,7 +85,7 @@ npm run dev
 | `STELLAR_NETWORK` | No | `testnet` | Stellar network name. |
 | `STELLAR_RPC_URL` | No | Soroban testnet RPC | Stellar RPC endpoint. |
 | `STELLAR_NETWORK_PASSPHRASE` | No | Testnet passphrase | Network passphrase. |
-| `VAULT_FACTORY_CONTRACT_ID` | No | empty | Vault factory contract ID. |
+| `VAULT_FACTORY_CONTRACT_ID` | **Recommended** | empty | Vault factory contract ID. **Required for event indexing.** If empty, the indexer will skip event polling and only update `indexer_state`, logging a warning at startup. |
 | `ZKME_VERIFIER_CONTRACT_ID` | No | empty | zkMe verifier contract ID. |
 | `INDEXER_START_LEDGER` | No | `0` | Ledger to begin indexing from. |
 | `INDEXER_POLL_INTERVAL_MS` | No | `5000` | Indexer polling interval. |
