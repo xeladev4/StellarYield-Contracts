@@ -71,6 +71,50 @@ export class VaultService {
     };
   }
 
+  async countVaults(): Promise<number> {
+    const countResult = await query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM vaults",
+    );
+    return parseInt(countResult[0]?.count ?? "0", 10);
+  }
+
+  async listVaultsByFactory(factoryId: string): Promise<Vault[]> {
+    const rows = await query<{
+      id: number;
+      contract_id: string;
+      factory_id: string | null;
+      asset: string;
+      name: string | null;
+      symbol: string | null;
+      state: string;
+      total_assets: string;
+      total_supply: string;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `SELECT id, contract_id, factory_id, asset, name, symbol, state,
+              total_assets, total_supply, created_at, updated_at
+       FROM vaults
+       WHERE factory_id = $1
+       ORDER BY created_at DESC`,
+      [factoryId],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      contractId: row.contract_id,
+      factoryId: row.factory_id,
+      asset: row.asset,
+      name: row.name,
+      symbol: row.symbol,
+      state: row.state as any,
+      totalAssets: row.total_assets,
+      totalSupply: row.total_supply,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
   async getVault(contractId: string): Promise<Vault | null> {
     const rows = await query<{
       id: number;

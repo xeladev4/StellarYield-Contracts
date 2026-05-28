@@ -333,7 +333,7 @@ export function parseDepositEvent(rawEvent: any): {
     const shares = BigInt(Array.isArray(data) ? data[1] : (data?.shares ?? 0));
 
     return { caller, receiver, assets, shares };
-  } catch (_error) {
+  } catch {
     return null;
   }
 }
@@ -372,7 +372,7 @@ export function parseYieldDistributedEvent(rawEvent: any): {
     const timestamp = BigInt(Array.isArray(data) ? data[1] : (data?.timestamp ?? 0));
 
     return { epoch, amount, timestamp };
-  } catch (_error) {
+  } catch {
     return null;
   }
 }

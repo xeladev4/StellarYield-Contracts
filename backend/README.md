@@ -98,6 +98,8 @@ connects to the `postgres` service.
 
 - `GET /health` - service and database health check.
 - `GET /api/v1/vaults` - list vaults.
+- `GET /api/v1/vaults/count` - return the total number of vaults.
+- `GET /api/v1/vaults/factory/:factoryId` - list vaults for a factory.
 - `GET /api/v1/vaults/:contractId` - get a vault by contract ID.
 - `GET /api/v1/vaults/:contractId/positions` - list vault positions.
 - `GET /api/v1/users/:address` - get a user by Stellar address.

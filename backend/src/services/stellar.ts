@@ -156,11 +156,11 @@ export async function readEpochData(
   }
 
   const epochArg = xdr.ScVal.scvU32(epoch);
-  
+
   let raw: any;
   try {
     raw = await simulateRead<any>(contractId, "get_epoch_data", [epochArg]);
-  } catch (_err: any) {
+  } catch {
     return { yieldAmount: 0n, totalShares: 0n, timestamp: 0n };
   }
 
@@ -174,4 +174,3 @@ export async function readEpochData(
     timestamp: BigInt(raw.timestamp ?? raw[2] ?? 0n),
   };
 }
-
