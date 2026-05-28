@@ -156,9 +156,44 @@ export class Indexer {
   // ── Stub handlers (filled in by subsequent commits) ────────────────────────
 
   protected async _handleDeposit(
-    _contractId: string,
-    _ev: rpc.Api.EventResponse,
-  ): Promise<void> {}
+    contractId: string,
+    ev: rpc.Api.EventResponse,
+  ): Promise<void> {
+    // topic: [Symbol("deposit"), caller, receiver]
+    // value: [assets, shares] or { assets, shares }
+    const caller = decodeAddr(ev.topic[1]);
+    const data = decodeValue(ev);
+    const dataArr = Array.isArray(data) ? data : Object.values(data as Record<string, unknown>);
+    const assets = decodeBigInt(dataArr[0]);
+    const shares = decodeBigInt(dataArr[1]);
+
+    const payload = { caller, assets: assets.toString(), shares: shares.toString() };
+    await storeIndexedEvent(contractId, "deposit", ev, payload).catch((err) =>
+      logger.warn(err, "Failed to store deposit event"),
+    );
+
+    const vaultRow = await query<{ id: number }>(
+      "SELECT id FROM vaults WHERE contract_id = $1",
+      [contractId],
+    );
+    if (vaultRow.length === 0) {
+      logger.warn({ contractId }, "Deposit event for unknown vault — skipping position update");
+      return;
+    }
+    const vaultId = vaultRow[0].id;
+
+    await query(
+      `INSERT INTO user_vault_positions (user_address, vault_id, shares, deposited)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_address, vault_id) DO UPDATE SET
+         shares    = user_vault_positions.shares    + EXCLUDED.shares,
+         deposited = user_vault_positions.deposited + EXCLUDED.deposited,
+         updated_at = NOW()`,
+      [caller, vaultId, shares.toString(), assets.toString()],
+    );
+
+    logger.info({ contractId, caller, shares: shares.toString() }, "Processed deposit event");
+  }
 
   protected async _handleWithdraw(
     _contractId: string,
