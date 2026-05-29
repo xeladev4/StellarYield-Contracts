@@ -1,5 +1,6 @@
 import cors from "cors";
 import express, { type Express } from "express";
+import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
@@ -15,6 +16,7 @@ import { publicLimiter, authLimiter } from "./api/middleware/rateLimit.js";
 export function createApp(): Express {
   const app = express();
 
+  app.use(helmet());
   app.use(pinoHttp({ logger }));
   app.use(express.json());
 
