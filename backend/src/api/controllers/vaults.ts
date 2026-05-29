@@ -69,7 +69,7 @@ export async function getVaultLiveState(req: Request, res: Response) {
   try {
     const state = await readVaultState(String(req.params["contractId"]));
     res.json({ state });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({
       error: "RpcError",
       message: "Failed to read live vault state from chain",
@@ -81,7 +81,7 @@ export async function getVaultLiveTotalAssets(req: Request, res: Response) {
   try {
     const totalAssets = await readTotalAssets(String(req.params["contractId"]));
     res.json({ totalAssets: totalAssets.toString() });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({
       error: "RpcError",
       message: "Failed to read live total assets from chain",
