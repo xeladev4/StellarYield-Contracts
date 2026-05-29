@@ -121,7 +121,7 @@ describe("YieldService", () => {
   });
 
   describe("recordEpoch", () => {
-    it("calls query with INSERT INTO epochs and correct params", async () => {
+    it("persists an epoch with an idempotent insert", async () => {
       const { query, service } = await getTestContext();
       query.mockResolvedValue([]);
 
@@ -131,6 +131,22 @@ describe("YieldService", () => {
         expect.stringContaining("INSERT INTO epochs"),
         [10, 1, "1000", "50000"],
       );
+      expect(query.mock.calls[0][0]).toContain("ON CONFLICT (vault_id, epoch) DO NOTHING");
+    });
+
+    it("uses the same conflict-safe insert when the same vault and epoch are recorded twice", async () => {
+      const { query, service } = await getTestContext();
+      query.mockResolvedValue([]);
+
+      await service.recordEpoch(10, 7, "2500", "100000");
+      await service.recordEpoch(10, 7, "2500", "100000");
+
+      expect(query).toHaveBeenCalledTimes(2);
+      for (const call of query.mock.calls) {
+        expect(call[0]).toContain("INSERT INTO epochs");
+        expect(call[0]).toContain("ON CONFLICT (vault_id, epoch) DO NOTHING");
+        expect(call[1]).toEqual([10, 7, "2500", "100000"]);
+      }
     });
   });
 });
