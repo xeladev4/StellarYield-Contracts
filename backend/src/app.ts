@@ -1,6 +1,8 @@
 import cors from "cors";
 import express, { type Express } from "express";
+import { pinoHttp } from "pino-http";
 import { config } from "./config.js";
+import { logger } from "./logger.js";
 import { healthRouter } from "./api/routes/health.js";
 import { vaultsRouter } from "./api/routes/vaults.js";
 import { usersRouter } from "./api/routes/users.js";
@@ -13,6 +15,7 @@ import { publicLimiter, authLimiter } from "./api/middleware/rateLimit.js";
 export function createApp(): Express {
   const app = express();
 
+  app.use(pinoHttp({ logger }));
   app.use(express.json());
 
   const origins = config.allowedOrigins;

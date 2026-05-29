@@ -103,6 +103,7 @@ connects to the `postgres` service.
 - `GET /api/v1/vaults/:contractId` - get a vault by contract ID.
 - `GET /api/v1/vaults/:contractId/positions` - list vault positions.
 - `GET /api/v1/users/:address` - get a user by Stellar address.
+- `GET /api/v1/users/:address/kyc?vaultId=:contractId` - live-read on-chain KYC status for a vault.
 - `GET /api/v1/users/:address/portfolio` - get a user's portfolio.
 - `GET /api/v1/yields/:contractId/epochs` - list vault yield epochs.
 - `GET /api/v1/yields/:contractId/pending/:userAddress` - get pending yield.

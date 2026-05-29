@@ -120,6 +120,20 @@ export async function readShareBalance(
 }
 
 /**
+ * Read whether a user address is KYC verified by the vault contract.
+ */
+export async function readKycVerified(
+  contractId: string,
+  userAddress: string,
+): Promise<boolean> {
+  const addrArg = Address.fromString(userAddress).toScVal();
+  const value = await simulateRead<boolean>(contractId, "is_kyc_verified", [
+    addrArg,
+  ]);
+  return Boolean(value);
+}
+
+/**
  * Read the current epoch from the contract.
  * Returns 0 for vaults in the "Funding" state.
  *

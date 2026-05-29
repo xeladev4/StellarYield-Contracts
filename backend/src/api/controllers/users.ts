@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { UserService } from "../../services/user.js";
+import { readKycVerified } from "../../services/stellar.js";
 
 const userService = new UserService();
 
@@ -26,6 +27,18 @@ export async function getUserPortfolio(
       String(req.params["address"]),
     );
     res.json(portfolio);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getUserKyc(req: Request, res: Response, next: NextFunction) {
+  try {
+    const verified = await readKycVerified(
+      String(req.query["vaultId"]),
+      String(req.params["address"]),
+    );
+    res.json({ verified });
   } catch (err) {
     next(err);
   }
