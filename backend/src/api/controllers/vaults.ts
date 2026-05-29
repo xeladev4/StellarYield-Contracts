@@ -97,3 +97,17 @@ export async function getVaultPositions(req: Request, res: Response, next: NextF
     next(err);
   }
 }
+export async function getRedemptionQueue(req: Request, res: Response, next: NextFunction) {
+  try {
+    const vault = await vaultService.getVault(String(req.params["contractId"]));
+    if (!vault) {
+      res.status(404).json({ error: "NotFound", message: "Vault not found" });
+      return;
+    }
+    const queue = await vaultService.getRedemptionQueue(String(req.params["contractId"]));
+    setCacheHeaders(res);
+    res.json(queue);
+  } catch (err) {
+    next(err);
+  }
+}

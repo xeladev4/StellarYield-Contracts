@@ -38,6 +38,16 @@ export interface UserVaultPosition {
   updatedAt: Date;
 }
 
+export interface RedemptionRequest {
+  id: number;
+  vaultId: number;
+  userAddress: string;
+  shares: string;
+  requestTime: Date;
+  processed: boolean;
+  createdAt: Date;
+}
+
 export interface UserPortfolioResponse {
   positions: UserVaultPosition[];
   totalDeposited: string;

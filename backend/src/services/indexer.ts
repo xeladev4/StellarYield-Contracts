@@ -348,6 +348,18 @@ export class Indexer {
       }
       return;
     }
+
+    const redemptionRequest = parseRequestEarlyRedemptionEvent(event);
+    if (redemptionRequest) {
+      await this.handleRequestEarlyRedemption(event.contractId ?? "", redemptionRequest);
+      await this.recordEvent(event, "request_early_redemption");
+      try {
+        await this.notificationService?.notify("request_early_redemption", redemptionRequest as any);
+      } catch (e) {
+        logger.warn({ err: e }, "NotificationService.notify failed for request_early_redemption");
+      }
+      return;
+    }
   }
 
   isRunning(): boolean {
@@ -452,6 +464,35 @@ export class Indexer {
       symbol: vaultCreated.symbol || null,
       state: "Funding",
     });
+  }
+
+  private async handleRequestEarlyRedemption(
+    contractId: string,
+    redemptionRequest: { userAddress: string; shares: bigint; timestamp: bigint },
+  ): Promise<void> {
+    const vaultRow = await query<{ id: number }>(
+      "SELECT id FROM vaults WHERE contract_id = $1",
+      [contractId],
+    );
+    if (vaultRow.length === 0) {
+      logger.warn({ contractId }, "request_early_redemption for unknown vault — skipping");
+      return;
+    }
+    const vaultId = vaultRow[0].id;
+
+    // Convert timestamp (presumably in seconds) to a Date
+    const requestTime = new Date(Number(redemptionRequest.timestamp) * 1000);
+
+    await query(
+      `INSERT INTO redemption_requests (vault_id, user_address, shares, request_time, processed)
+       VALUES ($1, $2, $3, $4, FALSE)
+       ON CONFLICT (vault_id, user_address, request_time) DO NOTHING`,
+      [vaultId, redemptionRequest.userAddress, redemptionRequest.shares.toString(), requestTime],
+    );
+    logger.info(
+      { contractId, userAddress: redemptionRequest.userAddress, shares: redemptionRequest.shares.toString() },
+      "Processed request_early_redemption event",
+    );
   }
 
   private async recordEvent(event: any, eventType: string): Promise<void> {
@@ -707,6 +748,48 @@ export function parseVaultCreatedEvent(rawEvent: any): {
     return { contractId, asset, name, symbol };
   } catch (error) {
     logger.warn({ error }, "Error parsing vault_created event");
+    return null;
+  }
+}
+export interface ParsedRequestEarlyRedemptionEvent {
+  userAddress: string;
+  shares: bigint;
+  timestamp: bigint;
+}
+
+export function parseRequestEarlyRedemptionEvent(rawEvent: unknown): ParsedRequestEarlyRedemptionEvent | null {
+  try {
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
+
+    if (!Array.isArray(topics) || topics.length < 2 || value == null) return null;
+
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
+    );
+    const parsedValue = typeof value === "string"
+      ? xdr.ScVal.fromXDR(value, "base64")
+      : value;
+
+    let eventName: string;
+    try {
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
+    } catch {
+      return null;
+    }
+    if (eventName !== "request_early_redemption") return null;
+
+    const userAddress = String(scValToNative(parsedTopics[1]) ?? "");
+
+    const data = scValToNative(parsedValue as xdr.ScVal);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const shares = decodeBigInt(arr[0]);
+    const timestamp = decodeBigInt(arr[1]);
+
+    return { userAddress, shares, timestamp };
+  } catch {
     return null;
   }
 }

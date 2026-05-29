@@ -195,4 +195,28 @@ export class VaultService {
 
     logger.info({ contractId }, "Vault upserted successfully");
   }
+
+  async getRedemptionQueue(contractId: string): Promise<any[]> {
+    const rows = await query<{
+      id: number;
+      user_address: string;
+      shares: string;
+      request_time: Date;
+    }>(
+      `SELECT rr.id, rr.user_address, rr.shares, rr.request_time
+       FROM redemption_requests rr
+       JOIN vaults v ON rr.vault_id = v.id
+       WHERE v.contract_id = $1 AND rr.processed = FALSE
+       ORDER BY rr.request_time ASC`,
+      [contractId],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      userAddress: row.user_address,
+      shares: row.shares,
+      requestTime: row.request_time,
+    }));
+  }
 }
+
