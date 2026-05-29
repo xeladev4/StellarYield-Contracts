@@ -106,3 +106,42 @@ connects to the `postgres` service.
 - `GET /api/v1/users/:address/portfolio` - get a user's portfolio.
 - `GET /api/v1/yields/:contractId/epochs` - list vault yield epochs.
 - `GET /api/v1/yields/:contractId/pending/:userAddress` - get pending yield.
+
+## Vault States
+
+The vault lifecycle consists of the following states:
+
+| State | Description | Triggered By |
+|-------|-------------|--------------|
+| `Funding` | Initial state. Vault accepts deposits and aims to meet funding target before deadline. | Vault creation via factory |
+| `Active` | Funding target met before deadline. Vault is operational and distributes yield. | Operator calls `activate_vault` after funding deadline passes with target met |
+| `Matured` | Funding period ended. No new deposits accepted; yield distribution and redemptions continue. | Operator calls `mature_vault` |
+| `Cancelled` | Funding deadline passed without meeting target. Depositors can withdraw refunds. | Operator calls `cancel_funding` (via `cancel_funding` event) |
+| `Closed` | Vault fully wound down. All shares redeemed or refunded. | Operator action |
+
+### Retrieving Cancelled Vaults
+
+To fetch all cancelled vaults via the API:
+
+```bash
+GET /api/v1/vaults?state=Cancelled
+```
+
+Example response:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "contractId": "CDLZFC3SYJYHZDQA6M57EYUC2XBDA6LQF3M6KFRDZ7TXJYJL2K3B",
+      "state": "Cancelled",
+      "totalAssets": "0",
+      "totalSupply": "0",
+      ...
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 20
+}
+```

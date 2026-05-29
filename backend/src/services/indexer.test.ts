@@ -9,7 +9,7 @@ vi.mock("./vault.js", () => ({ VaultService: vi.fn().mockImplementation(() => ({
 vi.mock("./notifications.js", () => ({ NotificationService: vi.fn().mockImplementation(() => ({})) }));
 
 import { rpc, xdr, nativeToScVal } from "@stellar/stellar-sdk";
-import { Indexer, parseDepositEvent, parseYieldDistributedEvent } from "./indexer.js";
+import { Indexer, parseDepositEvent, parseYieldDistributedEvent, parseCancelFundingEvent } from "./indexer.js";
 import { getSorobanRpc } from "./stellar.js";
 
 const VAULT_CONTRACT = "CDLZFC3SYJYHZDQA6M57EYUC2XBDA6LQF3M6KFRDZ7TXJYJL2K3B";
@@ -213,4 +213,36 @@ describe("Indexer tick", () => {
     await expect(indexer.tick()).resolves.toBeUndefined();
     expect((logger.warn as any).mock.calls.length).toBeGreaterThan(0);
   });
+  it("parses cancel_funding event", () => {
+    const topics = [xdr.ScVal.scvSymbol("fund_cxl")];
+    const data = xdr.ScVal.scvVoid();
+
+    const mockEvent = makeMockEvent("cancel_funding", VAULT_CONTRACT, [], data);
+    mockEvent.topic = topics;
+
+    const result = parseCancelFundingEvent(mockEvent);
+    expect(result).not.toBeNull();
+    expect(result?.contractId).toBe(VAULT_CONTRACT);
+  });
+
+  it("handles malformed cancel_funding event safely", () => {
+    expect(parseCancelFundingEvent(null)).toBeNull();
+    expect(parseCancelFundingEvent({})).toBeNull();
+    expect(parseCancelFundingEvent({ topics: [], value: null })).toBeNull();
+  });
+
+  it("recognizes both cancel_funding event name formats", () => {
+    const topics1 = [xdr.ScVal.scvSymbol("fund_cxl")];
+    const topics2 = [xdr.ScVal.scvSymbol("funding_cancelled")];
+    
+    const event1 = makeMockEvent("cancel_funding", VAULT_CONTRACT, [], xdr.ScVal.scvVoid());
+    event1.topic = topics1;
+    
+    const event2 = makeMockEvent("cancel_funding", VAULT_CONTRACT, [], xdr.ScVal.scvVoid());
+    event2.topic = topics2;
+
+    expect(parseCancelFundingEvent(event1)).not.toBeNull();
+    expect(parseCancelFundingEvent(event2)).not.toBeNull();
+  });
+
 });

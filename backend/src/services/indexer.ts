@@ -326,6 +326,18 @@ export class Indexer {
       return;
     }
 
+    const cancelFunding = parseCancelFundingEvent(event);
+    if (cancelFunding) {
+      await this.handleCancelFunding(event.contractId ?? "");
+      await this.recordEvent(event, "cancel_funding");
+      try {
+        await this.notificationService?.notify("cancel_funding", cancelFunding as any);
+      } catch (e) {
+        logger.warn({ err: e }, "NotificationService.notify failed for cancel_funding");
+      }
+      return;
+    }
+
     const vaultStateChanged = parseVaultStateChangedEvent(event);
     if (vaultStateChanged) {
       await this.recordEvent(event, "vault_state_changed");
@@ -451,6 +463,17 @@ export class Indexer {
       asset: vaultCreated.asset,
       symbol: vaultCreated.symbol || null,
       state: "Funding",
+    });
+  }
+
+  private async handleCancelFunding(
+    contractId: string,
+  ): Promise<void> {
+    logger.info({ contractId }, "Processing cancel_funding event");
+    
+    await this.vaultService.upsertVault({
+      contractId,
+      state: "Cancelled",
     });
   }
 
@@ -707,6 +730,36 @@ export function parseVaultCreatedEvent(rawEvent: any): {
     return { contractId, asset, name, symbol };
   } catch (error) {
     logger.warn({ error }, "Error parsing vault_created event");
+    return null;
+  }
+}
+
+export function parseCancelFundingEvent(rawEvent: any): {
+  contractId: string;
+} | null {
+  try {
+    const parsed = parseRawEventName(rawEvent);
+    if (!parsed) return null;
+
+    const { topics } = parsed;
+    
+    let eventName = "";
+    try {
+      const firstTopic = typeof topics[0] === "string"
+        ? xdr.ScVal.fromXDR(topics[0], "base64")
+        : (topics[0] as any);
+      eventName = scValToNative(firstTopic as any);
+    } catch {
+      return null;
+    }
+
+    if (eventName !== "fund_cxl" && eventName !== "funding_cancelled" && eventName !== "cancel_funding") return null;
+
+    const contractId = String(rawEvent?.contractId ?? "");
+    
+    return { contractId };
+  } catch (error) {
+    logger.warn({ error }, "Error parsing cancel_funding event");
     return null;
   }
 }
