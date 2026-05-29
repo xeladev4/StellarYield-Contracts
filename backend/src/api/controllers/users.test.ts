@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../db/index.js", () => ({ query: vi.fn() }));
+vi.mock("../../services/stellar.js", () => ({ readKycVerified: vi.fn() }));
 
 async function getTestContext() {
   const { query } = await import("../../db/index.js");
@@ -128,5 +129,23 @@ describe("User Controller - search validation", () => {
     await searchUsers(req, res, next);
 
     expect(res.json).toHaveBeenCalledWith([]);
+  });
+
+  it("getUserKyc controller returns live KYC status", async () => {
+    const { readKycVerified } = await import("../../services/stellar.js");
+    (readKycVerified as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+    const { getUserKyc } = await import("./users.js");
+    const req = {
+      params: { address: "GABCDEF" },
+      query: { vaultId: "CC_VAULT" },
+    } as any;
+    const res = { json: vi.fn() } as any;
+    const next = vi.fn();
+
+    await getUserKyc(req, res, next);
+
+    expect(readKycVerified).toHaveBeenCalledWith("CC_VAULT", "GABCDEF");
+    expect(res.json).toHaveBeenCalledWith({ verified: true });
   });
 });
