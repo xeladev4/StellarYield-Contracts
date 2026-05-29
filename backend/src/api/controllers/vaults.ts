@@ -69,7 +69,7 @@ export async function getVaultLiveState(req: Request, res: Response) {
   try {
     const state = await readVaultState(String(req.params["contractId"]));
     res.json({ state });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({
       error: "RpcError",
       message: "Failed to read live vault state from chain",
@@ -81,7 +81,7 @@ export async function getVaultLiveTotalAssets(req: Request, res: Response) {
   try {
     const totalAssets = await readTotalAssets(String(req.params["contractId"]));
     res.json({ totalAssets: totalAssets.toString() });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({
       error: "RpcError",
       message: "Failed to read live total assets from chain",
@@ -93,6 +93,20 @@ export async function getVaultPositions(req: Request, res: Response, next: NextF
   try {
     const positions = await vaultService.getVaultPositions(String(req.params["contractId"]));
     res.json(positions);
+  } catch (err) {
+    next(err);
+  }
+}
+export async function getRedemptionQueue(req: Request, res: Response, next: NextFunction) {
+  try {
+    const vault = await vaultService.getVault(String(req.params["contractId"]));
+    if (!vault) {
+      res.status(404).json({ error: "NotFound", message: "Vault not found" });
+      return;
+    }
+    const queue = await vaultService.getRedemptionQueue(String(req.params["contractId"]));
+    setCacheHeaders(res);
+    res.json(queue);
   } catch (err) {
     next(err);
   }

@@ -32,10 +32,22 @@ export interface UserVaultPosition {
   id: number;
   userAddress: string;
   vaultId: number;
+  contractId?: string;
+  state?: VaultState;
   shares: string;
   deposited: string;
   lastClaimedEpoch: number;
   updatedAt: Date;
+}
+
+export interface RedemptionRequest {
+  id: number;
+  vaultId: number;
+  userAddress: string;
+  shares: string;
+  requestTime: Date;
+  processed: boolean;
+  createdAt: Date;
 }
 
 export interface UserPortfolioResponse {

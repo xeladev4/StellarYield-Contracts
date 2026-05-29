@@ -10,9 +10,13 @@ const server = app.listen(config.port, () => {
   void indexer.start();
 });
 
-process.on("SIGTERM", () => {
+function shutdown(): void {
+  logger.info("Shutting down");
   indexer.stop();
   server.close(() => {
     logger.info("StellarYield backend stopped");
   });
-});
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

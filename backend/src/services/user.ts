@@ -16,7 +16,8 @@ export class UserService {
     }>(
       `SELECT id, address, kyc_verified, created_at, updated_at 
        FROM users 
-       WHERE address = $1`,
+       WHERE address = $1
+       LIMIT 1`,
       [address],
     );
 
@@ -34,14 +35,14 @@ export class UserService {
     };
   }
 
-  async upsertUser(address: string, kycVerified?: boolean): Promise<void> {
+  async upsertUser(address: string, kycVerified = false): Promise<void> {
     await query(
       `INSERT INTO users (address, kyc_verified) 
        VALUES ($1, $2)
        ON CONFLICT (address) DO UPDATE 
-       SET kyc_verified = COALESCE($2, users.kyc_verified),
+       SET kyc_verified = EXCLUDED.kyc_verified,
            updated_at = NOW()`,
-      [address, kycVerified ?? false],
+      [address, kycVerified],
     );
   }
 
@@ -50,14 +51,19 @@ export class UserService {
       id: number;
       user_address: string;
       vault_id: number;
+      contract_id: string;
+      state: string;
       shares: string;
       deposited: string;
       last_claimed_epoch: number;
       updated_at: Date;
     }>(
-      `SELECT id, user_address, vault_id, shares, deposited, last_claimed_epoch, updated_at
-       FROM user_vault_positions
-       WHERE user_address = $1`,
+      `SELECT uvp.id, uvp.user_address, uvp.vault_id, v.contract_id, v.state,
+              uvp.shares, uvp.deposited, uvp.last_claimed_epoch, uvp.updated_at
+       FROM user_vault_positions uvp
+       JOIN vaults v ON uvp.vault_id = v.id
+       WHERE uvp.user_address = $1
+       ORDER BY uvp.deposited DESC`,
       [address],
     );
 
@@ -70,6 +76,8 @@ export class UserService {
         id: row.id,
         userAddress: row.user_address,
         vaultId: row.vault_id,
+        contractId: row.contract_id,
+        state: row.state as UserVaultPosition["state"],
         shares: row.shares || "0",
         deposited,
         lastClaimedEpoch: row.last_claimed_epoch,
