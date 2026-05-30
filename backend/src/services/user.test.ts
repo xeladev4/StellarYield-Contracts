@@ -65,6 +65,23 @@ describe("UserService", () => {
     });
   });
 
+  describe("upsertUser", () => {
+    it("upserts and overwrites kycVerified on conflict", async () => {
+      vi.mocked(db.query).mockResolvedValueOnce([]);
+
+      await userService.upsertUser(TEST_ADDRESS, true);
+
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining("ON CONFLICT (address) DO UPDATE"),
+        [TEST_ADDRESS, true],
+      );
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining("kyc_verified = EXCLUDED.kyc_verified"),
+        [TEST_ADDRESS, true],
+      );
+    });
+  });
+
   describe("getUserPortfolio", () => {
     it("should return portfolio with positions and totalDeposited sum", async () => {
       const mockPositions = [
@@ -72,6 +89,8 @@ describe("UserService", () => {
           id: 1,
           user_address: TEST_ADDRESS,
           vault_id: 1,
+          contract_id: "CCONTRACT11111111111111111111111111111111111111111111",
+          state: "Active",
           shares: "1000",
           deposited: "5000",
           last_claimed_epoch: 0,
@@ -81,6 +100,8 @@ describe("UserService", () => {
           id: 2,
           user_address: TEST_ADDRESS,
           vault_id: 2,
+          contract_id: "CCONTRACT22222222222222222222222222222222222222222222",
+          state: "Funding",
           shares: "2000",
           deposited: "3000",
           last_claimed_epoch: 1,
@@ -97,6 +118,8 @@ describe("UserService", () => {
         id: 1,
         userAddress: TEST_ADDRESS,
         vaultId: 1,
+        contractId: "CCONTRACT11111111111111111111111111111111111111111111",
+        state: "Active",
         shares: "1000",
         deposited: "5000",
         lastClaimedEpoch: 0,
@@ -106,12 +129,22 @@ describe("UserService", () => {
         id: 2,
         userAddress: TEST_ADDRESS,
         vaultId: 2,
+        contractId: "CCONTRACT22222222222222222222222222222222222222222222",
+        state: "Funding",
         shares: "2000",
         deposited: "3000",
         lastClaimedEpoch: 1,
         updatedAt: mockPositions[1].updated_at,
       });
       expect(result.totalDeposited).toBe("8000");
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining("JOIN vaults"),
+        [TEST_ADDRESS],
+      );
+      expect(db.query).toHaveBeenCalledWith(
+        expect.stringContaining("ORDER BY uvp.deposited DESC"),
+        [TEST_ADDRESS],
+      );
     });
 
     it("should return empty portfolio with zero totalDeposited when user has no positions", async () => {

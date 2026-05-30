@@ -68,12 +68,18 @@ export class YieldService {
     for (const row of epochRows) {
       if (row.epoch <= lastClaimedEpoch) {
         claimedEpochs.push(row.epoch);
-      } else {
+        continue;
+      }
+
+      const totalShares = BigInt(row.total_shares);
+      if (totalShares <= BigInt(0)) {
+        continue;
+      }
+
+      const epochYield = (BigInt(row.yield_amount) * shares) / totalShares;
+      if (epochYield > BigInt(0)) {
+        pendingYield += epochYield;
         pendingEpochs.push(row.epoch);
-        const totalShares = BigInt(row.total_shares);
-        if (totalShares > BigInt(0)) {
-          pendingYield += (shares * BigInt(row.yield_amount)) / totalShares;
-        }
       }
     }
 

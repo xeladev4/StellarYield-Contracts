@@ -11,6 +11,10 @@ pub enum VaultType {
 }
 
 /// Vault registration metadata.
+///
+/// Fields added for issue #515 (operatorFeeBps), #516 (maturityDate),
+/// and #517 (expectedApy) so that frontends can display fee, maturity,
+/// and APY data without an additional on-chain read.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct VaultInfo {
@@ -21,6 +25,13 @@ pub struct VaultInfo {
     pub symbol: String,
     pub active: bool,
     pub created_at: u64,
+    /// Operator fee in basis points (issue #515). Sourced from
+    /// `early_redemption_fee_bps` set at vault creation.
+    pub operator_fee_bps: u32,
+    /// Unix timestamp (seconds) at which the vault matures (issue #516).
+    pub maturity_date: u64,
+    /// Expected APY in basis points as encoded on-chain (issue #517).
+    pub expected_apy: u32,
 }
 
 /// Lightweight vault metadata for list views.

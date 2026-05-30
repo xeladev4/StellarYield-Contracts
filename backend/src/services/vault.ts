@@ -34,8 +34,10 @@ function mapVaultRow(row: VaultRow): Vault {
     name: row.name,
     symbol: row.symbol,
     state: row.state as any,
-    totalAssets: row.total_assets,
-    totalSupply: row.total_supply,
+    // Defensive fallback: row.total_assets should always be non-null after the
+    // COALESCE in the query, but guard here too in case of raw inserts (#499).
+    totalAssets: row.total_assets ?? "0",
+    totalSupply: row.total_supply ?? "0",
     depositorCount: row.depositor_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -54,10 +56,14 @@ export class VaultService {
     const params: any[] = [pageSize, offset];
     if (state) params.push(state);
 
-    // Query vaults with pagination
+    // Query vaults with pagination.
+    // COALESCE(v.total_assets, '0') guarantees every vault item in the response
+    // carries a non-null totalAssets string, satisfying issue #499.
     const vaults = await query<VaultRow>(
       `SELECT v.id, v.contract_id, v.factory_id, v.asset, v.name, v.symbol, v.state,
-              v.total_assets, v.total_supply, v.created_at, v.updated_at,
+              COALESCE(v.total_assets, '0') AS total_assets,
+              COALESCE(v.total_supply, '0') AS total_supply,
+              v.created_at, v.updated_at,
               COALESCE((
                 SELECT COUNT(*)::int
                 FROM user_vault_positions uvp
@@ -100,7 +106,9 @@ export class VaultService {
   async listVaultsByFactory(factoryId: string): Promise<Vault[]> {
     const rows = await query<VaultRow>(
       `SELECT v.id, v.contract_id, v.factory_id, v.asset, v.name, v.symbol, v.state,
-              v.total_assets, v.total_supply, v.created_at, v.updated_at,
+              COALESCE(v.total_assets, '0') AS total_assets,
+              COALESCE(v.total_supply, '0') AS total_supply,
+              v.created_at, v.updated_at,
               COALESCE((
                 SELECT COUNT(*)::int
                 FROM user_vault_positions uvp
@@ -195,4 +203,28 @@ export class VaultService {
 
     logger.info({ contractId }, "Vault upserted successfully");
   }
+
+  async getRedemptionQueue(contractId: string): Promise<any[]> {
+    const rows = await query<{
+      id: number;
+      user_address: string;
+      shares: string;
+      request_time: Date;
+    }>(
+      `SELECT rr.id, rr.user_address, rr.shares, rr.request_time
+       FROM redemption_requests rr
+       JOIN vaults v ON rr.vault_id = v.id
+       WHERE v.contract_id = $1 AND rr.processed = FALSE
+       ORDER BY rr.request_time ASC`,
+      [contractId],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      userAddress: row.user_address,
+      shares: row.shares,
+      requestTime: row.request_time,
+    }));
+  }
 }
+
