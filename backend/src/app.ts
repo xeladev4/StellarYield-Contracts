@@ -1,5 +1,6 @@
 import cors from "cors";
 import express, { type Express } from "express";
+import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
@@ -10,11 +11,13 @@ import { yieldsRouter } from "./api/routes/yields.js";
 import { adminRouter } from "./api/routes/admin.js";
 import { webhooksRouter } from "./api/routes/webhooks.js";
 import { errorHandler } from "./api/middleware/errors.js";
+import { requestId } from "./api/middleware/requestId.js";
 import { publicLimiter, authLimiter } from "./api/middleware/rateLimit.js";
 
 export function createApp(): Express {
   const app = express();
 
+  app.use(helmet());
   app.use(pinoHttp({ logger }));
   app.use(express.json());
 
@@ -23,6 +26,8 @@ export function createApp(): Express {
     const origin = origins.length === 1 && origins[0] === "*" ? "*" : origins;
     app.use(cors({ origin }));
   }
+
+  app.use(requestId);
 
   app.use("/health", publicLimiter, healthRouter);
   app.use("/api/v1/vaults", publicLimiter, vaultsRouter);
