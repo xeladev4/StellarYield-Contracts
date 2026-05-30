@@ -21,8 +21,19 @@ interface VaultRow {
   total_assets: string;
   total_supply: string;
   depositor_count: number;
+  funding_target: string | null;
+  funding_deadline: Date | null;
+  min_deposit: string | null;
+  max_deposit_per_user: string | null;
   created_at: Date;
   updated_at: Date;
+}
+
+function computeFundingProgress(totalAssets: string, fundingTarget: string | null): number | null {
+  if (!fundingTarget) return null;
+  const target = parseFloat(fundingTarget);
+  if (!target) return 0;
+  return Math.min(100, (parseFloat(totalAssets) / target) * 100);
 }
 
 function mapVaultRow(row: VaultRow): Vault {
@@ -39,6 +50,11 @@ function mapVaultRow(row: VaultRow): Vault {
     totalAssets: row.total_assets ?? "0",
     totalSupply: row.total_supply ?? "0",
     depositorCount: row.depositor_count,
+    fundingTarget: row.funding_target,
+    fundingDeadline: row.funding_deadline,
+    fundingProgress: computeFundingProgress(row.total_assets, row.funding_target),
+    minDeposit: row.min_deposit,
+    maxDepositPerUser: row.max_deposit_per_user,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -61,9 +77,8 @@ export class VaultService {
     // carries a non-null totalAssets string, satisfying issue #499.
     const vaults = await query<VaultRow>(
       `SELECT v.id, v.contract_id, v.factory_id, v.asset, v.name, v.symbol, v.state,
-              COALESCE(v.total_assets, '0') AS total_assets,
-              COALESCE(v.total_supply, '0') AS total_supply,
-              v.created_at, v.updated_at,
+              v.total_assets, v.total_supply, v.created_at, v.updated_at,
+              v.funding_target, v.funding_deadline, v.min_deposit, v.max_deposit_per_user,
               COALESCE((
                 SELECT COUNT(*)::int
                 FROM user_vault_positions uvp
@@ -106,9 +121,8 @@ export class VaultService {
   async listVaultsByFactory(factoryId: string): Promise<Vault[]> {
     const rows = await query<VaultRow>(
       `SELECT v.id, v.contract_id, v.factory_id, v.asset, v.name, v.symbol, v.state,
-              COALESCE(v.total_assets, '0') AS total_assets,
-              COALESCE(v.total_supply, '0') AS total_supply,
-              v.created_at, v.updated_at,
+              v.total_assets, v.total_supply, v.created_at, v.updated_at,
+              v.funding_target, v.funding_deadline, v.min_deposit, v.max_deposit_per_user,
               COALESCE((
                 SELECT COUNT(*)::int
                 FROM user_vault_positions uvp
@@ -127,6 +141,7 @@ export class VaultService {
     const rows = await query<VaultRow>(
       `SELECT v.id, v.contract_id, v.factory_id, v.asset, v.name, v.symbol, v.state,
               v.total_assets, v.total_supply, v.created_at, v.updated_at,
+              v.funding_target, v.funding_deadline, v.min_deposit, v.max_deposit_per_user,
               COALESCE((
                 SELECT COUNT(*)::int
                 FROM user_vault_positions uvp
@@ -182,6 +197,10 @@ export class VaultService {
       state = "Funding",
       totalAssets = "0",
       totalSupply = "0",
+      fundingTarget = null,
+      fundingDeadline = null,
+      minDeposit = null,
+      maxDepositPerUser = null,
     } = vault;
 
     logger.info(
@@ -190,15 +209,25 @@ export class VaultService {
     );
 
     await query(
-      `INSERT INTO vaults (contract_id, factory_id, asset, name, symbol, state, total_assets, total_supply, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      `INSERT INTO vaults (
+         contract_id, factory_id, asset, name, symbol, state,
+         total_assets, total_supply,
+         funding_target, funding_deadline, min_deposit, max_deposit_per_user,
+         created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
        ON CONFLICT (contract_id)
        DO UPDATE SET
          state = EXCLUDED.state,
          total_assets = EXCLUDED.total_assets,
          total_supply = EXCLUDED.total_supply,
+         funding_target = COALESCE(EXCLUDED.funding_target, vaults.funding_target),
+         funding_deadline = COALESCE(EXCLUDED.funding_deadline, vaults.funding_deadline),
+         min_deposit = COALESCE(EXCLUDED.min_deposit, vaults.min_deposit),
+         max_deposit_per_user = COALESCE(EXCLUDED.max_deposit_per_user, vaults.max_deposit_per_user),
          updated_at = NOW()`,
-      [contractId, factoryId, asset, name, symbol, state, totalAssets, totalSupply],
+      [contractId, factoryId, asset, name, symbol, state, totalAssets, totalSupply,
+       fundingTarget, fundingDeadline, minDeposit, maxDepositPerUser],
     );
 
     logger.info({ contractId }, "Vault upserted successfully");

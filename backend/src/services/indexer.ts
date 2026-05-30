@@ -462,7 +462,16 @@ export class Indexer {
 
   private async handleVaultCreated(
     factoryId: string,
-    vaultCreated: { contractId: string; asset: string; name: string; symbol: string },
+    vaultCreated: {
+      contractId: string;
+      asset: string;
+      name: string;
+      symbol: string;
+      fundingTarget: string | null;
+      fundingDeadline: Date | null;
+      minDeposit: string | null;
+      maxDepositPerUser: string | null;
+    },
   ): Promise<void> {
     logger.info(
       { vault: vaultCreated.contractId, factoryId, name: vaultCreated.name },
@@ -475,6 +484,10 @@ export class Indexer {
       asset: vaultCreated.asset,
       symbol: vaultCreated.symbol || null,
       state: "Funding",
+      fundingTarget: vaultCreated.fundingTarget,
+      fundingDeadline: vaultCreated.fundingDeadline,
+      minDeposit: vaultCreated.minDeposit,
+      maxDepositPerUser: vaultCreated.maxDepositPerUser,
     });
   }
 
@@ -728,6 +741,10 @@ export function parseVaultCreatedEvent(rawEvent: any): {
   asset: string;
   name: string;
   symbol: string;
+  fundingTarget: string | null;
+  fundingDeadline: Date | null;
+  minDeposit: string | null;
+  maxDepositPerUser: string | null;
 } | null {
   try {
     const parsed = parseRawEventName(rawEvent);
@@ -757,7 +774,23 @@ export function parseVaultCreatedEvent(rawEvent: any): {
     const name = String(nativeData?.name ?? (Array.isArray(nativeData) ? nativeData[1] : "") ?? "");
     const symbol = String(nativeData?.symbol ?? (Array.isArray(nativeData) ? nativeData[2] : "") ?? "");
 
-    return { contractId, asset, name, symbol };
+    const rawFundingTarget = nativeData?.funding_target ?? nativeData?.fundingTarget ?? null;
+    const fundingTarget = rawFundingTarget != null ? String(rawFundingTarget) : null;
+
+    const rawFundingDeadline = nativeData?.funding_deadline ?? nativeData?.fundingDeadline ?? null;
+    let fundingDeadline: Date | null = null;
+    if (rawFundingDeadline != null) {
+      const ts = Number(rawFundingDeadline);
+      fundingDeadline = isNaN(ts) ? null : new Date(ts * 1000);
+    }
+
+    const rawMinDeposit = nativeData?.min_deposit ?? nativeData?.minDeposit ?? null;
+    const minDeposit = rawMinDeposit != null ? String(rawMinDeposit) : null;
+
+    const rawMaxDeposit = nativeData?.max_deposit_per_user ?? nativeData?.maxDepositPerUser ?? null;
+    const maxDepositPerUser = rawMaxDeposit != null ? String(rawMaxDeposit) : null;
+
+    return { contractId, asset, name, symbol, fundingTarget, fundingDeadline, minDeposit, maxDepositPerUser };
   } catch (error) {
     logger.warn({ error }, "Error parsing vault_created event");
     return null;

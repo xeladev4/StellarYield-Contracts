@@ -16,6 +16,11 @@ export interface Vault {
   totalAssets: string;
   totalSupply: string;
   depositorCount: number;
+  fundingTarget: string | null;
+  fundingDeadline: Date | null;
+  fundingProgress: number | null;
+  minDeposit: string | null;
+  maxDepositPerUser: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
