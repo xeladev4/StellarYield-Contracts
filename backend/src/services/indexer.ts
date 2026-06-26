@@ -372,6 +372,20 @@ export class Indexer {
       }
       return;
     }
+
+    const yieldClaimed = parseYieldClaimedEvent(event);
+    if (yieldClaimed) {
+      await this.handleYieldClaimed(event.contractId ?? "", yieldClaimed.user, yieldClaimed.epoch);
+      await this.recordEvent(event, "yield_claimed");
+      return;
+    }
+
+    const yieldClaimedPartial = parseYieldClaimedPartialEvent(event);
+    if (yieldClaimedPartial) {
+      await this.handleYieldClaimed(event.contractId ?? "", yieldClaimedPartial.user, yieldClaimedPartial.epoch);
+      await this.recordEvent(event, "yield_claimed_partial");
+      return;
+    }
   }
 
   isRunning(): boolean {
@@ -492,6 +506,19 @@ export class Indexer {
       minDeposit: vaultCreated.minDeposit,
       maxDepositPerUser: vaultCreated.maxDepositPerUser,
     });
+  }
+
+  private async handleYieldClaimed(contractId: string, userAddress: string, epoch: number): Promise<void> {
+    await query(
+      `UPDATE user_vault_positions uvp
+       SET last_claimed_epoch = GREATEST(last_claimed_epoch, $1), updated_at = NOW()
+       FROM vaults v
+       WHERE v.contract_id = $2
+         AND uvp.vault_id = v.id
+         AND uvp.user_address = $3`,
+      [epoch, contractId, userAddress],
+    );
+    logger.info({ contractId, userAddress, epoch }, "Processed yield_claimed event");
   }
 
   private async handleRequestEarlyRedemption(
@@ -876,6 +903,143 @@ export function parseRequestEarlyRedemptionEvent(rawEvent: unknown): ParsedReque
     const timestamp = decodeBigInt(arr[1]);
 
     return { userAddress, shares, timestamp };
+  } catch {
+    return null;
+  }
+}
+
+// ── Issue #571: parseEarlyRedemptionRequestedEvent ────────────────────────────
+
+export interface ParsedEarlyRedemptionRequestedEvent {
+  user: string;
+  requestId: number;
+  shares: bigint;
+  queuePosition: number;
+}
+
+export function parseEarlyRedemptionRequestedEvent(rawEvent: unknown): ParsedEarlyRedemptionRequestedEvent | null {
+  try {
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
+
+    if (!Array.isArray(topics) || topics.length < 2 || value == null) return null;
+
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
+    );
+    const parsedValue = typeof value === "string"
+      ? xdr.ScVal.fromXDR(value, "base64")
+      : value;
+
+    let eventName: string;
+    try {
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
+    } catch {
+      return null;
+    }
+    if (eventName !== "erq_req") return null;
+
+    const user = String(scValToNative(parsedTopics[1]) ?? "");
+
+    const data = scValToNative(parsedValue as xdr.ScVal);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const requestId = Number(arr[0] ?? 0);
+    const shares = decodeBigInt(arr[1]);
+    const queuePosition = Number(arr[2] ?? 0);
+
+    return { user, requestId, shares, queuePosition };
+  } catch {
+    return null;
+  }
+}
+
+// ── Issue #569: parseYieldClaimedEvent / parseYieldClaimedPartialEvent ─────────
+
+export interface ParsedYieldClaimedEvent {
+  user: string;
+  amount: bigint;
+  epoch: number;
+}
+
+export function parseYieldClaimedEvent(rawEvent: unknown): ParsedYieldClaimedEvent | null {
+  try {
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
+
+    if (!Array.isArray(topics) || topics.length < 2 || value == null) return null;
+
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
+    );
+    const parsedValue = typeof value === "string"
+      ? xdr.ScVal.fromXDR(value, "base64")
+      : value;
+
+    let eventName: string;
+    try {
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
+    } catch {
+      return null;
+    }
+    if (eventName !== "yield_clm") return null;
+
+    const user = String(scValToNative(parsedTopics[1]) ?? "");
+
+    const data = scValToNative(parsedValue as xdr.ScVal);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const amount = decodeBigInt(arr[0]);
+    const epoch = Number(arr[1] ?? 0);
+
+    return { user, amount, epoch };
+  } catch {
+    return null;
+  }
+}
+
+export interface ParsedYieldClaimedPartialEvent {
+  user: string;
+  claimed: bigint;
+  shortfall: bigint;
+  epoch: number;
+}
+
+export function parseYieldClaimedPartialEvent(rawEvent: unknown): ParsedYieldClaimedPartialEvent | null {
+  try {
+    if (!rawEvent || typeof rawEvent !== "object") return null;
+    const ev = rawEvent as Record<string, unknown>;
+    const topics = (ev["topic"] ?? ev["topics"]) as unknown[] | undefined;
+    const value = ev["value"] ?? ev["data"];
+
+    if (!Array.isArray(topics) || topics.length < 2 || value == null) return null;
+
+    const parsedTopics = topics.map((t) =>
+      typeof t === "string" ? xdr.ScVal.fromXDR(t, "base64") : (t as xdr.ScVal),
+    );
+    const parsedValue = typeof value === "string"
+      ? xdr.ScVal.fromXDR(value, "base64")
+      : value;
+
+    let eventName: string;
+    try {
+      eventName = String(scValToNative(parsedTopics[0]) ?? "");
+    } catch {
+      return null;
+    }
+    if (eventName !== "prt_yld") return null;
+
+    const user = String(scValToNative(parsedTopics[1]) ?? "");
+
+    const data = scValToNative(parsedValue as xdr.ScVal);
+    const arr = Array.isArray(data) ? data : Object.values((data as Record<string, unknown>) ?? {});
+    const claimed = decodeBigInt(arr[0]);
+    const shortfall = decodeBigInt(arr[1]);
+    const epoch = Number(arr[2] ?? 0);
+
+    return { user, claimed, shortfall, epoch };
   } catch {
     return null;
   }

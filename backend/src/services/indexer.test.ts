@@ -246,3 +246,73 @@ describe("Indexer tick", () => {
   });
 
 });
+
+// ── Issue #569: yield_claimed parsers ──────────────────────────────────────────
+
+import {
+  parseYieldClaimedEvent,
+  parseYieldClaimedPartialEvent,
+  parseEarlyRedemptionRequestedEvent,
+} from "./indexer.js";
+
+describe("parseYieldClaimedEvent", () => {
+  it("parses a valid yield_clm event", () => {
+    const topics = [nativeToScVal("yield_clm"), nativeToScVal(ACCOUNT)];
+    const data = nativeToScVal([5000n, 3]);
+    const result = parseYieldClaimedEvent({ topics, data });
+    expect(result).not.toBeNull();
+    expect(result?.user).toBe(ACCOUNT);
+    expect(result?.amount).toBe(5000n);
+    expect(result?.epoch).toBe(3);
+  });
+
+  it("returns null for malformed events", () => {
+    expect(parseYieldClaimedEvent(null)).toBeNull();
+    expect(parseYieldClaimedEvent({})).toBeNull();
+    expect(parseYieldClaimedEvent({ topics: [nativeToScVal("wrong")], data: nativeToScVal([]) })).toBeNull();
+  });
+});
+
+describe("parseYieldClaimedPartialEvent", () => {
+  it("parses a valid prt_yld event", () => {
+    const topics = [nativeToScVal("prt_yld"), nativeToScVal(ACCOUNT)];
+    const data = nativeToScVal([3000n, 500n, 7]);
+    const result = parseYieldClaimedPartialEvent({ topics, data });
+    expect(result).not.toBeNull();
+    expect(result?.user).toBe(ACCOUNT);
+    expect(result?.claimed).toBe(3000n);
+    expect(result?.shortfall).toBe(500n);
+    expect(result?.epoch).toBe(7);
+  });
+
+  it("returns null for malformed events", () => {
+    expect(parseYieldClaimedPartialEvent(null)).toBeNull();
+    expect(parseYieldClaimedPartialEvent({})).toBeNull();
+  });
+});
+
+// ── Issue #571: parseEarlyRedemptionRequestedEvent ────────────────────────────
+
+describe("parseEarlyRedemptionRequestedEvent", () => {
+  it("parses a valid erq_req event", () => {
+    const topics = [nativeToScVal("erq_req"), nativeToScVal(ACCOUNT)];
+    const data = nativeToScVal([42, 10000n, 2]);
+    const result = parseEarlyRedemptionRequestedEvent({ topics, data });
+    expect(result).not.toBeNull();
+    expect(result?.user).toBe(ACCOUNT);
+    expect(result?.requestId).toBe(42);
+    expect(result?.shares).toBe(10000n);
+    expect(result?.queuePosition).toBe(2);
+  });
+
+  it("returns null for unrecognised topic", () => {
+    const topics = [nativeToScVal("unknown_event"), nativeToScVal(ACCOUNT)];
+    const data = nativeToScVal([1, 100n, 1]);
+    expect(parseEarlyRedemptionRequestedEvent({ topics, data })).toBeNull();
+  });
+
+  it("returns null for malformed events", () => {
+    expect(parseEarlyRedemptionRequestedEvent(null)).toBeNull();
+    expect(parseEarlyRedemptionRequestedEvent({})).toBeNull();
+  });
+});
