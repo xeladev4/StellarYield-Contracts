@@ -11,6 +11,17 @@ function setCacheHeaders(res: Response): void {
   res.set("Cache-Control", "max-age=10, stale-while-revalidate=60");
 }
 
+/**
+ * Escape a single CSV field per RFC 4180: wrap in double quotes and double any
+ * embedded quotes when the value contains a comma, quote, or newline.
+ */
+function csvEscape(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
 export async function listVaults(req: Request, res: Response, next: NextFunction) {
   try {
     const {
@@ -96,6 +107,96 @@ export async function getVaultPositions(req: Request, res: Response, next: NextF
   try {
     const positions = await vaultService.getVaultPositions(String(req.params["contractId"]));
     res.json(positions);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/v1/vaults/:contractId/early-redemption-fee?shares=
+ *
+ * Returns a preview of the cost of redeeming `shares` early:
+ *   { grossAssets, feeBps, feeAmount, netAssets }
+ * All monetary values are BigInt-safe strings. Responds 400 when `shares` is
+ * missing or non-positive, and 404 when the vault does not exist.
+ */
+export async function getEarlyRedemptionFee(req: Request, res: Response, next: NextFunction) {
+  try {
+    const sharesParam = req.query["shares"];
+    if (typeof sharesParam !== "string" || !/^\d+$/.test(sharesParam)) {
+      res.status(400).json({
+        error: "BadRequest",
+        message: "shares query parameter is required and must be a positive integer",
+      });
+      return;
+    }
+
+    const shares = BigInt(sharesParam);
+    if (shares <= 0n) {
+      res.status(400).json({
+        error: "BadRequest",
+        message: "shares must be greater than zero",
+      });
+      return;
+    }
+
+    const preview = await vaultService.getEarlyRedemptionFeePreview(
+      String(req.params["contractId"]),
+      shares,
+    );
+    if (!preview) {
+      res.status(404).json({ error: "NotFound", message: "Vault not found" });
+      return;
+    }
+
+    res.json(preview);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/v1/vaults/:contractId/export.csv
+ *
+ * Streams vault data as a CSV attachment with columns:
+ * contractId, state, totalAssets, totalSupply, depositorCount, epochCount,
+ * expectedApy, maturityDate. Responds 404 when the vault does not exist.
+ */
+export async function exportVaultCsv(req: Request, res: Response, next: NextFunction) {
+  try {
+    const contractId = String(req.params["contractId"]);
+    const data = await vaultService.getVaultExportData(contractId);
+    if (!data) {
+      res.status(404).json({ error: "NotFound", message: "Vault not found" });
+      return;
+    }
+
+    const columns = [
+      "contractId",
+      "state",
+      "totalAssets",
+      "totalSupply",
+      "depositorCount",
+      "epochCount",
+      "expectedApy",
+      "maturityDate",
+    ];
+    const row = [
+      data.contractId,
+      data.state,
+      data.totalAssets,
+      data.totalSupply,
+      String(data.depositorCount),
+      String(data.epochCount),
+      data.expectedApy != null ? String(data.expectedApy) : "",
+      data.maturityDate ? data.maturityDate.toISOString() : "",
+    ];
+
+    const csv = `${columns.map(csvEscape).join(",")}\r\n${row.map(csvEscape).join(",")}\r\n`;
+
+    res.set("Content-Type", "text/csv");
+    res.set("Content-Disposition", `attachment; filename="vault-${contractId}.csv"`);
+    res.send(csv);
   } catch (err) {
     next(err);
   }

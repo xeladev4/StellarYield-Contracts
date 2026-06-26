@@ -11,6 +11,8 @@ import {
   getRedemptionQueue,
   getVaultSnapshot,
   getVaultTvlHistory,
+  getEarlyRedemptionFee,
+  exportVaultCsv,
 } from "../controllers/vaults.js";
 import { validateParams, validateQuery } from "../middleware/validate.js";
 
@@ -44,3 +46,11 @@ vaultsRouter.get("/:contractId/redemption-queue", validateParams(vaultParamsSche
 vaultsRouter.get("/:contractId/snapshot", validateParams(vaultParamsSchema), getVaultSnapshot);
 // Get vault TVL history: GET /api/v1/vaults/:contractId/tvl-history
 vaultsRouter.get("/:contractId/tvl-history", validateParams(vaultParamsSchema), getVaultTvlHistory);
+// Early redemption fee preview: GET /api/v1/vaults/:contractId/early-redemption-fee?shares=
+vaultsRouter.get(
+  "/:contractId/early-redemption-fee",
+  validateParams(vaultParamsSchema),
+  getEarlyRedemptionFee,
+);
+// Export vault data as CSV: GET /api/v1/vaults/:contractId/export.csv
+vaultsRouter.get("/:contractId/export.csv", validateParams(vaultParamsSchema), exportVaultCsv);

@@ -233,6 +233,114 @@ export class VaultService {
     logger.info({ contractId }, "Vault upserted successfully");
   }
 
+  /**
+   * Compute an early-redemption fee preview for a given share amount.
+   *
+   * Gross assets are derived from the vault's current exchange rate
+   * (total_assets / total_supply). Net assets apply the vault's early
+   * redemption fee: netAssets = grossAssets * (10000 - feeBps) / 10000.
+   *
+   * All monetary values are returned as BigInt-safe strings. Returns `null`
+   * if the vault does not exist.
+   */
+  async getEarlyRedemptionFeePreview(
+    contractId: string,
+    shares: bigint,
+  ): Promise<{
+    grossAssets: string;
+    feeBps: number;
+    feeAmount: string;
+    netAssets: string;
+  } | null> {
+    const rows = await query<{
+      total_assets: string | null;
+      total_supply: string | null;
+      early_redemption_fee_bps: number | null;
+    }>(
+      `SELECT total_assets, total_supply, early_redemption_fee_bps
+       FROM vaults
+       WHERE contract_id = $1`,
+      [contractId],
+    );
+
+    if (rows.length === 0) return null;
+
+    const totalAssets = BigInt(rows[0].total_assets ?? "0");
+    const totalSupply = BigInt(rows[0].total_supply ?? "0");
+    const feeBps = rows[0].early_redemption_fee_bps ?? 0;
+
+    // Convert shares to underlying assets at the current exchange rate.
+    // Fall back to a 1:1 rate when no shares have been minted yet.
+    const grossAssets =
+      totalSupply > 0n ? (shares * totalAssets) / totalSupply : shares;
+
+    const netAssets = (grossAssets * BigInt(10000 - feeBps)) / 10000n;
+    const feeAmount = grossAssets - netAssets;
+
+    return {
+      grossAssets: grossAssets.toString(),
+      feeBps,
+      feeAmount: feeAmount.toString(),
+      netAssets: netAssets.toString(),
+    };
+  }
+
+  /**
+   * Collect the data needed for the CSV export of a single vault, including the
+   * epoch count. Returns `null` if the vault does not exist.
+   */
+  async getVaultExportData(contractId: string): Promise<{
+    contractId: string;
+    state: string;
+    totalAssets: string;
+    totalSupply: string;
+    depositorCount: number;
+    epochCount: number;
+    expectedApy: number | null;
+    maturityDate: Date | null;
+  } | null> {
+    const rows = await query<{
+      contract_id: string;
+      state: string;
+      total_assets: string | null;
+      total_supply: string | null;
+      expected_apy: number | null;
+      maturity_date: Date | null;
+      depositor_count: number;
+      epoch_count: number;
+    }>(
+      `SELECT v.contract_id, v.state, v.total_assets, v.total_supply,
+              v.expected_apy, v.maturity_date,
+              COALESCE((
+                SELECT COUNT(*)::int
+                FROM user_vault_positions uvp
+                WHERE uvp.vault_id = v.id AND uvp.shares > 0
+              ), 0) AS depositor_count,
+              COALESCE((
+                SELECT COUNT(*)::int
+                FROM epochs e
+                WHERE e.vault_id = v.id
+              ), 0) AS epoch_count
+       FROM vaults v
+       WHERE v.contract_id = $1`,
+      [contractId],
+    );
+
+    if (rows.length === 0) return null;
+
+    const row = rows[0];
+    return {
+      contractId: row.contract_id,
+      state: row.state,
+      totalAssets: row.total_assets ?? "0",
+      totalSupply: row.total_supply ?? "0",
+      depositorCount: row.depositor_count,
+      epochCount: row.epoch_count,
+      expectedApy: row.expected_apy,
+      maturityDate: row.maturity_date,
+    };
+  }
+
   async getRedemptionQueue(contractId: string): Promise<any[]> {
     const rows = await query<{
       id: number;
