@@ -117,10 +117,11 @@ describe("parseRequestEarlyRedemptionEvent", () => {
   it("parses a valid request_early_redemption event", () => {
     const mockEvent = {
       topic: [
-        xdr.ScVal.scvSymbol("request_early_redemption"),
+        xdr.ScVal.scvSymbol("erq_req"),
         xdr.ScVal.scvAddress(xdr.Address.typeAccount(new xdr.PublicKey.publicKeyTypeEd25519(Buffer.alloc(32, 42)))),
       ],
       value: xdr.ScVal.scvVec([
+        xdr.ScVal.scvU32(1),
         xdr.ScVal.scvU128(xdr.Uint128Parts.fromXDRObject({
           lo: xdr.Uint64.fromString("1000"),
           hi: xdr.Uint64.fromString("0"),
@@ -132,6 +133,7 @@ describe("parseRequestEarlyRedemptionEvent", () => {
     const result = parseRequestEarlyRedemptionEvent(mockEvent);
     expect(result).not.toBeNull();
     if (result) {
+      expect(result.requestId).toBe(1);
       expect(result.shares).toBe(1000n);
       expect(result.timestamp).toBe(1609459200n);
       expect(result.userAddress).toBeDefined();
@@ -199,6 +201,7 @@ describe("Indexer - request_early_redemption handler", () => {
         xdr.ScVal.scvAddress(xdr.Address.typeAccount(new xdr.PublicKey.publicKeyTypeEd25519(Buffer.alloc(32, 99)))),
       ],
       value: xdr.ScVal.scvVec([
+        xdr.ScVal.scvU32(1),
         xdr.ScVal.scvU128(xdr.Uint128Parts.fromXDRObject({
           lo: xdr.Uint64.fromString("500"),
           hi: xdr.Uint64.fromString("0"),
@@ -233,6 +236,7 @@ describe("Indexer - request_early_redemption handler", () => {
         xdr.ScVal.scvAddress(xdr.Address.typeAccount(new xdr.PublicKey.publicKeyTypeEd25519(Buffer.alloc(32, 88)))),
       ],
       value: xdr.ScVal.scvVec([
+        xdr.ScVal.scvU32(2),
         xdr.ScVal.scvU128(xdr.Uint128Parts.fromXDRObject({
           lo: xdr.Uint64.fromString("100"),
           hi: xdr.Uint64.fromString("0"),
@@ -268,6 +272,7 @@ describe("Indexer - request_early_redemption handler", () => {
         xdr.ScVal.scvAddress(xdr.Address.typeAccount(new xdr.PublicKey.publicKeyTypeEd25519(Buffer.alloc(32, 77)))),
       ],
       value: xdr.ScVal.scvVec([
+        xdr.ScVal.scvU32(3),
         xdr.ScVal.scvU128(xdr.Uint128Parts.fromXDRObject({
           lo: xdr.Uint64.fromString("250"),
           hi: xdr.Uint64.fromString("0"),

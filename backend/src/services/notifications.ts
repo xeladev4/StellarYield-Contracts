@@ -68,10 +68,86 @@ export class NotificationService {
 
     const payload = JSON.stringify({ event, data, timestamp: new Date().toISOString() });
 
-    await Promise.allSettled(webhooks.map((webhook) => this.deliver(webhook, payload)));
+    const results = await Promise.allSettled(
+      webhooks.map((webhook) => this.deliver(webhook, payload)),
+    );
+
+    for (let i = 0; i < webhooks.length; i++) {
+      const result = results[i];
+      if (result.status === "rejected" || (result.status === "fulfilled" && !result.value)) {
+        await query(
+          `INSERT INTO webhook_deliveries (webhook_id, payload, attempt, next_retry_at, last_error)
+           VALUES ($1, $2, 1, NOW() + INTERVAL '5 seconds', $3)`,
+          [webhooks[i].id, payload, result.status === "rejected" ? String(result.reason) : "non-2xx response"],
+        );
+      }
+    }
   }
 
-  private async deliver(webhook: WebhookRow, payload: string): Promise<void> {
+  /**
+   * Process due webhook retries. Selects entries that are due for retry,
+   * re-delivers, and updates the delivery status.
+   */
+  async processRetries(): Promise<void> {
+    const dueRows = await query<{
+      id: number;
+      webhook_id: number;
+      payload: string;
+      attempt: number;
+    }>(
+      `SELECT wd.id, wd.webhook_id, wd.payload, wd.attempt
+       FROM webhook_deliveries wd
+       JOIN webhooks w ON w.id = wd.webhook_id AND w.active = TRUE
+       WHERE wd.next_retry_at <= NOW()
+         AND wd.delivered_at IS NULL
+         AND wd.attempt < 6
+       ORDER BY wd.next_retry_at ASC
+       LIMIT 50`,
+    );
+
+    for (const row of dueRows) {
+      try {
+        const webhookRows = await query<WebhookRow>(
+          "SELECT id, url, events, secret FROM webhooks WHERE id = $1",
+          [row.webhook_id],
+        );
+        if (webhookRows.length === 0) continue;
+        const webhook = webhookRows[0];
+
+        const ok = await this.deliver(webhook, row.payload);
+        if (ok) {
+          await query(
+            "UPDATE webhook_deliveries SET delivered_at = NOW() WHERE id = $1",
+            [row.id],
+          );
+        } else {
+          const nextAttempt = row.attempt + 1;
+          const delaySeconds = Math.min(Math.pow(2, row.attempt) * 5, 3600);
+          await query(
+            `UPDATE webhook_deliveries
+             SET attempt = $1, next_retry_at = NOW() + INTERVAL '1 second' * $2, last_error = $3
+             WHERE id = $4`,
+            [nextAttempt, delaySeconds, "non-2xx response", row.id],
+          );
+        }
+      } catch (err) {
+        const nextAttempt = row.attempt + 1;
+        const delaySeconds = Math.min(Math.pow(2, row.attempt) * 5, 3600);
+        await query(
+          `UPDATE webhook_deliveries
+           SET attempt = $1, next_retry_at = NOW() + INTERVAL '1 second' * $2, last_error = $3
+           WHERE id = $4`,
+          [nextAttempt, delaySeconds, String(err), row.id],
+        );
+      }
+    }
+  }
+
+  /**
+   * Deliver a webhook payload. Returns true on success, false on failure.
+   * Throws on network/SSRF errors.
+   */
+  private async deliver(webhook: WebhookRow, payload: string): Promise<boolean> {
     // Re-validate at delivery time to defend against DNS rebinding.
     try {
       await validateWebhookUrl(webhook.url);
@@ -80,7 +156,7 @@ export class NotificationService {
         { webhookId: webhook.id, url: webhook.url, err },
         "Webhook URL failed SSRF check at delivery; skipping",
       );
-      return;
+      return false;
     }
 
     const headers: Record<string, string> = {
@@ -106,7 +182,7 @@ export class NotificationService {
           { webhookId: webhook.id, url: webhook.url, status: response.status },
           "Webhook delivery returned redirect; rejected for SSRF protection",
         );
-        return;
+        return false;
       }
 
       if (!response.ok) {
@@ -114,9 +190,13 @@ export class NotificationService {
           { webhookId: webhook.id, url: webhook.url, status: response.status },
           "Webhook delivery returned non-2xx status",
         );
+        return false;
       }
+
+      return true;
     } catch (err) {
       logger.warn({ webhookId: webhook.id, url: webhook.url, err }, "Webhook delivery failed");
+      throw err;
     }
   }
 
